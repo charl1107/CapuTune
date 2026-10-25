@@ -33,8 +33,6 @@ Song _song(String id) =>
 class _FakePlayerService implements PlayerService {
   @override
   bool get isDarkMode => false;
-  @override
-  set isDarkMode(bool value) {}
 
   @override
   bool isFavorite(String id) => false;
@@ -95,13 +93,24 @@ Future<void> _pumpScreen(
 
 void main() {
   setUpAll(() async {
-    // Serve Inter from disk so text layout matches the app (google_fonts
-    // cannot fetch at runtime in tests).
-    final fontData =
-        File('/tmp/opencode/fonts/Inter.ttf').readAsBytesSync();
-    final loader = FontLoader('Inter')
-      ..addFont(Future.value(ByteData.view(fontData.buffer)));
-    await loader.load();
+    // Optionally load Inter from disk so text layout matches the app. The
+    // font is not vendored in the repo (the app fetches it at runtime via
+    // google_fonts, which cannot fetch inside tests), so when no file is
+    // available the suite simply uses Flutter's built-in test fallback
+    // font. The invariants exercised here (line metrics, field headroom)
+    // hold for any font by construction.
+    const candidates = [
+      String.fromEnvironment('CAPUTUNE_TEST_FONT'),
+      '/tmp/opencode/fonts/Inter.ttf',
+    ];
+    for (final path in candidates) {
+      if (path.isEmpty || !File(path).existsSync()) continue;
+      final fontData = File(path).readAsBytesSync();
+      final loader = FontLoader('Inter')
+        ..addFont(Future.value(ByteData.view(fontData.buffer)));
+      await loader.load();
+      break;
+    }
     GoogleFonts.config.allowRuntimeFetching = false;
   });
 

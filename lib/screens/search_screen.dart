@@ -54,7 +54,11 @@ class _SearchScreenState extends State<SearchScreen> {
   /// stale responses: only the result of the most recently issued search is
   /// applied, so fast typing can never let an older reply overwrite a newer
   /// one. Empty queries clear state synchronously.
-  Future<void> _search() async {
+  ///
+  /// Recent searches are recorded on explicit submission only (keyboard
+  /// search action / Enter) — never per keystroke, otherwise every partial
+  /// query ("lo", "lof", "lofi"...) pollutes the recents list.
+  Future<void> _search({bool record = false}) async {
     final query = _controller.text.trim();
     final seq = ++_searchSeq;
     if (query.isEmpty) {
@@ -66,7 +70,7 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
-    StorageService.addRecentSearch(query);
+    if (record) StorageService.addRecentSearch(query);
     setState(() {
       _recentSearches = StorageService.getRecentSearches();
       _isLoading = true;
@@ -91,17 +95,18 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   void _onSearchChanged(String query) {
-    if (query.trim().isEmpty) {
-      _search();
-      return;
-    }
     _search();
+  }
+
+  void _submitSearch(String query) {
+    _focusNode.unfocus();
+    _search(record: true);
   }
 
   void _tapRecentSearch(String query) {
     _controller.text = query;
     _focusNode.unfocus();
-    _search();
+    _search(record: true);
   }
 
   void _removeRecentSearch(String query) async {
@@ -169,6 +174,10 @@ class _SearchScreenState extends State<SearchScreen> {
                     .withValues(alpha: 0.5),
               ),
               onChanged: _onSearchChanged,
+              // Record a recent search only when the user explicitly
+              // commits the query (Enter / IME search action).
+              textInputAction: TextInputAction.search,
+              onSubmitted: _submitSearch,
             ),
           ),
           Expanded(
