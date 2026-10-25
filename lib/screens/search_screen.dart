@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/discovery_service.dart';
@@ -8,7 +7,12 @@ import '../models/song.dart';
 import '../widgets/song_card.dart';
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key});
+  const SearchScreen({super.key, this.searchRemote});
+
+  /// Remote search used for every query. Defaults to [DiscoveryService.search];
+  /// tests inject a fake here so instant-search behavior is verifiable
+  /// without network access.
+  final Future<List<Song>> Function(String query)? searchRemote;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -20,9 +24,13 @@ class _SearchScreenState extends State<SearchScreen> {
   List<Song> _results = [];
   bool _isLoading = false;
   bool _hasSearched = false;
-  Timer? _debounce;
   List<String> _recentSearches = [];
   List<Song> _suggestedSongs = [];
+
+  /// Monotonic id of the newest search request. Because search is fired on
+  /// every keystroke with no debounce, responses race; a response whose id is
+  /// no longer the newest must never land in [_results].
+  int _searchSeq = 0;
 
   @override
   void initState() {
@@ -37,45 +45,57 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
-  void _onSearchChanged(String query) {
-    _debounce?.cancel();
-    if (query.trim().isEmpty) {
+  /// Fires a search for the current text immediately and guards against
+  /// stale responses: only the result of the most recently issued search is
+  /// applied, so fast typing can never let an older reply overwrite a newer
+  /// one. Empty queries clear state synchronously.
+  Future<void> _search() async {
+    final query = _controller.text.trim();
+    final seq = ++_searchSeq;
+    if (query.isEmpty) {
       setState(() {
         _results = [];
         _hasSearched = false;
+        _isLoading = false;
       });
       return;
     }
-    _debounce = Timer(const Duration(milliseconds: 200), () {
-      _search();
-    });
-  }
-
-  Future<void> _search() async {
-    final query = _controller.text.trim();
-    if (query.isEmpty) return;
 
     StorageService.addRecentSearch(query);
-    _recentSearches = StorageService.getRecentSearches();
-
     setState(() {
+      _recentSearches = StorageService.getRecentSearches();
       _isLoading = true;
       _hasSearched = true;
     });
 
-    final results = await DiscoveryService.search(query);
-    if (mounted) {
+    try {
+      final results =
+          await (widget.searchRemote ?? DiscoveryService.search)(query);
+      if (!mounted || seq != _searchSeq) return;
       setState(() {
         _results = results;
         _isLoading = false;
       });
+    } catch (_) {
+      if (!mounted || seq != _searchSeq) return;
+      setState(() {
+        _results = [];
+        _isLoading = false;
+      });
     }
+  }
+
+  void _onSearchChanged(String query) {
+    if (query.trim().isEmpty) {
+      _search();
+      return;
+    }
+    _search();
   }
 
   void _tapRecentSearch(String query) {
@@ -105,7 +125,26 @@ class _SearchScreenState extends State<SearchScreen> {
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
+              // The typed text renders at the font's own line metrics instead
+              // of the theme's forced 1.5x multiplier, so fallback-font glyphs
+              // (emoji, accented characters) have full headroom inside the
+              // field's line box and are never vertically clipped.
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    height: 1.0,
+                    fontSize: 16,
+                    fontFamily: 'Inter',
+                  ),
+              // Give the glyphs vertical slack inside the decorated border.
+              // Material 3 sizes the field to exactly the text's preferred
+              // line height (56 = 24 + 32 at scale 1.0), leaving no headroom;
+              // devices that round pixel metrics then clip ascenders or
+              // descenders of the typed text.
               decoration: InputDecoration(
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 12,
+                ),
                 hintText: 'Search songs, artists...',
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: _controller.text.isNotEmpty
@@ -171,13 +210,16 @@ class _SearchScreenState extends State<SearchScreen> {
       children: [
         if (_recentSearches.isNotEmpty) ...[
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Recent searches',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+              const Expanded(
+                child: Text(
+                  'Recent searches',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               TextButton(

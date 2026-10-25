@@ -1,0 +1,235 @@
+// Instant-search behavior for SearchScreen.
+//
+// Search must fire on every keystroke with no debounce, results must stay
+// synchronized with the newest query (stale responses discarded), and the
+// text field must keep vertical headroom around the glyphs so no device
+// metric rounding can clip the typed text.
+//
+// DiscoveryService is never touched: the screen's `searchRemote` parameter
+// injects a fake, and PlayerService is replaced by a no-op stand-in because
+// the real one starts the libmpv media engine (unavailable in the test VM).
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:provider/provider.dart';
+
+import 'package:caputune/models/song.dart';
+import 'package:caputune/screens/search_screen.dart';
+import 'package:caputune/services/download_service.dart';
+import 'package:caputune/services/player_service.dart';
+import 'package:caputune/services/storage_service.dart';
+import 'package:caputune/theme/app_theme.dart';
+
+Song _song(String id) =>
+    Song(id: id, title: 'Song $id', artist: 'Artist', thumbnail: null);
+
+/// PlayerService stand-in: never constructs the real service, so libmpv is
+/// never loaded. Overrides only what SearchScreen touches.
+class _FakePlayerService implements PlayerService {
+  @override
+  bool get isDarkMode => false;
+  @override
+  set isDarkMode(bool value) {}
+
+  @override
+  bool isFavorite(String id) => false;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+/// Fake remote search. Each query can be answered manually via [respond],
+/// which lets tests hold a response back to simulate a slow network.
+class _FakeSearch {
+  final Map<String, Completer<List<Song>>> _pending = {};
+
+  Future<List<Song>> call(String query) {
+    return _pending.putIfAbsent(query, () => Completer<List<Song>>()).future;
+  }
+
+  void respond(String query, List<Song> results) {
+    _pending.remove(query)!.complete(results);
+  }
+}
+
+Future<Directory> _initStorage(WidgetTester tester) async {
+  late Directory tempDir;
+  await tester.runAsync(() async {
+    tempDir = await Directory.systemTemp.createTemp('caputune_search_test');
+    Hive.init(tempDir.path);
+    await StorageService.init();
+  });
+  return tempDir;
+}
+
+Future<void> _pumpScreen(
+  WidgetTester tester, {
+  _FakeSearch? search,
+}) async {
+  await tester.pumpWidget(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<PlayerService>.value(
+          value: _FakePlayerService(),
+        ),
+        // SongCard watches DownloadService; the real service is inert until a
+        // download starts, which these tests never do.
+        ChangeNotifierProvider<DownloadService>(create: (_) => DownloadService()),
+      ],
+      child: MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: SearchScreen(
+          searchRemote:
+              search == null ? null : (q) => search(q),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  setUpAll(() async {
+    // Serve Inter from disk so text layout matches the app (google_fonts
+    // cannot fetch at runtime in tests).
+    final fontData =
+        File('/tmp/opencode/fonts/Inter.ttf').readAsBytesSync();
+    final loader = FontLoader('Inter')
+      ..addFont(Future.value(ByteData.view(fontData.buffer)));
+    await loader.load();
+    GoogleFonts.config.allowRuntimeFetching = false;
+  });
+
+  testWidgets('results appear immediately on the first keystroke (no debounce)',
+      (tester) async {
+    final search = _FakeSearch();
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester, search: search);
+
+    await tester.enterText(find.byType(TextField), 'lofi');
+    await tester.pump(); // one frame only — a debounce would not have fired
+
+    search.respond('lofi', [_song('1')]);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Song 1'), findsOneWidget);
+    // The spinner must be gone and results shown.
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('results follow the newest query while typing', (tester) async {
+    final search = _FakeSearch();
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester, search: search);
+
+    await tester.enterText(find.byType(TextField), 'lofi');
+    await tester.pump();
+    search.respond('lofi', [_song('1')]);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Song 1'), findsOneWidget);
+
+    // Keep typing: the query changes and the results must follow.
+    await tester.enterText(find.byType(TextField), 'lofi beats');
+    await tester.pump();
+    search.respond('lofi beats', [_song('2')]);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Song 2'), findsOneWidget);
+    expect(find.text('Song 1'), findsNothing);
+  });
+
+  testWidgets('a stale response never overwrites a newer result',
+      (tester) async {
+    final search = _FakeSearch();
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester, search: search);
+
+    // First query, response held back (slow network).
+    await tester.enterText(find.byType(TextField), 'slow');
+    await tester.pump();
+    // Second query arrives and answers first (fast network).
+    await tester.enterText(find.byType(TextField), 'fast');
+    await tester.pump();
+    search.respond('fast', [_song('fast-song')]);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Song fast-song'), findsOneWidget);
+
+    // The slow response lands afterwards and must be discarded.
+    search.respond('slow', [_song('stale-song')]);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Song stale-song'), findsNothing);
+    expect(find.text('Song fast-song'), findsOneWidget);
+  });
+
+  testWidgets('clearing the field empties results and blocks in-flight ones',
+      (tester) async {
+    final search = _FakeSearch();
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester, search: search);
+
+    await tester.enterText(find.byType(TextField), 'jazz');
+    await tester.pump();
+    // Clear before the response arrives.
+    await tester.tap(find.byIcon(Icons.clear));
+    await tester.pump();
+    search.respond('jazz', [_song('late')]);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Song late'), findsNothing);
+    expect(find.byType(TextField), findsOneWidget);
+    // Back to the suggestions/empty state, not a results list.
+    expect(find.text('No results found.'), findsNothing);
+  });
+
+  testWidgets('text field keeps vertical headroom around the glyphs',
+      (tester) async {
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.reset);
+
+    await _pumpScreen(tester);
+
+    for (final scale in <double>[1.0, 1.3]) {
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.platformDispatcher.clearAllTestValues);
+      await tester.pumpAndSettle();
+
+      final fieldBox =
+          tester.renderObject<RenderBox>(find.byType(TextField));
+      RenderObject node = fieldBox;
+      while (!node.runtimeType.toString().contains('RenderEditable')) {
+        RenderObject? next;
+        node.visitChildren((child) => next ??= child);
+        node = next!;
+      }
+      final glyphLine = (node as dynamic).preferredLineHeight as double;
+      final fieldHeight = fieldBox.size.height;
+
+      // The line box inside the field must be at least 8px taller than the
+      // glyphs need, so pixel rounding on real devices cannot clip them.
+      expect(
+        fieldHeight - glyphLine,
+        greaterThanOrEqualTo(8),
+        reason: 'At fontScale $scale the field ($fieldHeight px) must leave '
+            'headroom around the glyphs ($glyphLine px).',
+      );
+    }
+  });
+}

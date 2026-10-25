@@ -110,6 +110,14 @@ class _HomeScreenState extends State<HomeScreen> {
           expandedHeight: 180,
           pinned: true,
           flexibleSpace: FlexibleSpaceBar(
+            // Left-align the title block instead of FlexibleSpaceBar's
+            // default 72dp toolbar indent, so the logo + app name line up
+            // with the 24dp horizontal padding used by the content below.
+            centerTitle: false,
+            titlePadding: const EdgeInsetsDirectional.only(
+              start: AppColors.spacingL,
+              bottom: 14,
+            ),
             title: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -123,12 +131,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  'CapuTune',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 24,
-                    color: Colors.white,
+                // Flexible so a narrow screen ellipsizes instead of
+                // overflowing the app bar.
+                const Flexible(
+                  child: Text(
+                    'CapuTune',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 24,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ],
@@ -239,19 +253,32 @@ class _HomeScreenState extends State<HomeScreen> {
     required String emptyMessage,
     required PlayerService playerService,
   }) {
+    // Vertical rhythm: 8px above the heading (plus the previous section's
+    // 16px bottom padding = 24px between sections), 16px below before the
+    // cards. This replaces the old uniform 24px padding which left a ~48px
+    // dead band between sections.
     return Padding(
-      padding: const EdgeInsets.all(AppColors.spacingL),
+      padding: const EdgeInsets.fromLTRB(
+        AppColors.spacingL,
+        AppColors.spacingS,
+        AppColors.spacingL,
+        AppColors.spacingM,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               if (songs.isNotEmpty)
