@@ -1,0 +1,44 @@
+name: caputune
+description: CapuTune - A full music player app
+publish_to: 'none'
+version: 1.0.6+7
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.1.1
+  just_audio: ^0.9.36
+  audio_session: ^0.1.18
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  cupertino_icons: ^1.0.6
+  cached_network_image: ^3.3.1
+  shimmer: ^3.0.0
+  uuid: ^4.2.1
+  dio: ^5.4.0
+  path_provider: ^2.1.0
+  file_picker: ^13.2.0
+  share_plus: ^13.3.1
+  google_fonts: ^6.1.0
+  youtube_explode_dart: ^3.1.0
+  logging: ^1.3.0
+  media_kit: ^1.1.11
+  media_kit_libs_audio: ^1.0.5
+  url_launcher: ^6.2.5
+  package_info_plus: ^10.2.2
+  crypto: ^3.0.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.8
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

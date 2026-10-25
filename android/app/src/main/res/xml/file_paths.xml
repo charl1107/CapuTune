@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Verified update APKs are downloaded to cacheDir/updates before being
+         handed to the system installer. Only that subdirectory is shared. -->
+    <cache-path name="updates" path="updates/" />
+</paths>

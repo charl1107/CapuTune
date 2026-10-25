@@ -1,0 +1,155 @@
+name: Android Release
+
+# Publishes a release on every push to the default branch, and on demand
+# (workflow_dispatch) with a selectable version increment.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version increment for this release
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+# One release at a time; queued, never cancelled, so two pushes in quick
+# succession bump the version sequentially instead of racing on the tag.
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require the default branch
+        env:
+          EXPECTED_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" != "$EXPECTED_BRANCH" ]]; then
+            echo "Run releases from the default branch ($EXPECTED_BRANCH)."
+            exit 1
+          fi
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          cache-dependency-path: pubspec.lock
+
+      - name: Decode release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          : "${KEYSTORE_BASE64:?Missing ANDROID_KEYSTORE_BASE64 repository secret}"
+          : "${STORE_PASSWORD:?Missing ANDROID_STORE_PASSWORD repository secret}"
+          : "${KEY_PASSWORD:?Missing ANDROID_KEY_PASSWORD repository secret}"
+          : "${KEY_ALIAS:?Missing ANDROID_KEY_ALIAS repository secret}"
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.p12
+          {
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyPassword=$KEY_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "storeFile=upload-keystore.p12"
+            echo "storeType=PKCS12"
+          } > android/key.properties
+
+      - name: Increment app version
+        id: version
+        env:
+          # inputs.bump only exists for workflow_dispatch; on push this
+          # defaults to a patch bump.
+          BUMP: ${{ inputs.bump || 'patch' }}
+        run: |
+          set -euo pipefail
+          current=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n 1)
+          version=${current%%+*}
+          build=${current##*+}
+          if [[ "$version" == "$current" ]]; then build=0; fi
+          IFS='.' read -r major minor patch <<< "$version"
+          [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ && "$build" =~ ^[0-9]+$ ]]
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "Unsupported version increment: $BUMP"; exit 1 ;;
+          esac
+          build=$((build + 1))
+          next="$major.$minor.$patch"
+          tag="v$next"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag already exists. Fetch the latest default branch and retry."
+            exit 1
+          fi
+          sed -i "s/^version:.*/version: $next+$build/" pubspec.yaml
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze and test
+        run: |
+          flutter analyze
+          flutter test
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Commit version and create tag
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pubspec.yaml pubspec.lock
+          git commit -m "chore: release ${RELEASE_TAG}"
+          git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
+          git push origin "HEAD:${GITHUB_REF_NAME}" "$RELEASE_TAG"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+        run: |
+          set -euo pipefail
+          asset="caputune-${RELEASE_TAG}-android.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "$asset"
+          # Publish a SHA-256 next to the APK. The app downloads and verifies
+          # this before handing the APK to the system installer; releases that
+          # do not publish it are only offered as a link to this page.
+          sha256sum "$asset" > "$asset.sha256"
+          gh release create "$RELEASE_TAG" "$asset" "$asset.sha256" \
+            --title "CapuTune ${RELEASE_TAG}" \
+            --generate-notes
+          echo "Published CapuTune ${RELEASE_VERSION}+${BUILD_NUMBER}"
