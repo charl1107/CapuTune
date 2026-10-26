@@ -12,11 +12,12 @@ class SongCard extends StatefulWidget {
   final VoidCallback? onTap;
   final bool isCompact;
 
-  /// Artwork edge for the compact (home screen) card. ~160–180dp square on
-  /// typical phones; shrinks slightly on narrow screens via [compactArtwork]
-  /// instead of stretching.
-  static const double compactCardHeight = 214;
-  static const double compactArtwork = 168;
+  /// Compact (home screen) card metrics. The original card was 160dp wide
+  /// with 144dp art inside a 220dp row; the compact card is smaller on every
+  /// axis: 144dp card, 128dp artwork, 190dp row. [compactArtwork] steps down
+  /// 12dp on narrow screens and up 12dp on tablets via [_buildCompactCard].
+  static const double compactCardHeight = 190;
+  static const double compactArtwork = 144;
 
   const SongCard({
     super.key,
@@ -62,14 +63,14 @@ class _SongCardState extends State<SongCard>
   }
 
   Widget _buildCompactCard(BuildContext context) {
-    // Responsive artwork edge: 168dp on typical phones, stepped down on
-    // narrow screens and up on tablets so the square stays in the 160-180dp
-    // target band without stretching or overflow.
+    // Responsive artwork edge: 144dp on typical phones, stepped down on
+    // narrow screens and up on tablets so the square scales without
+    // stretching or overflow.
     final media = MediaQuery.of(context);
     final edge = media.size.width < 340
         ? SongCard.compactArtwork - 12
         : media.size.width > 700
-            ? SongCard.compactArtwork + 8
+            ? SongCard.compactArtwork + 12
             : SongCard.compactArtwork;
     final artSize = edge - 2 * AppColors.spacingS; // inside the card padding
 
