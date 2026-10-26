@@ -1,0 +1,134 @@
+name: iOS Build
+
+# Builds an unsigned iOS app archive on every push to the default branch and
+# attaches it as an .ipa to the same GitHub Release the Android workflow
+# creates. iOS compilation requires macOS/Xcode, so this runs on a macOS
+# runner.
+#
+# The .ipa is UNSIGNED: there is no Apple Developer account certificate in
+# CI. Sideload it with Sideloadly / AltStore / Xcode, which re-sign it with
+# a personal (free) Apple ID — the standard route for self-distributed apps.
+#
+# The Android workflow is the release owner (it bumps the version, creates
+# the tag and the release). This job waits for that release to exist, then
+# appends the iOS asset. No signing secrets required.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ios-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build unsigned iOS IPA
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          cache-dependency-path: pubspec.lock
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze and test
+        run: |
+          flutter analyze
+          flutter test
+
+      - name: Wait for the Android release job
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The Android workflow bumps the version, creates the tag, and
+          # publishes the release. Wait for a run of the Android workflow on
+          # this exact commit to finish, then wait for its release tag.
+          for i in $(seq 1 60); do
+            run_id=$(gh run list --workflow "Android Release" \
+              --commit "$HEAD_SHA" --json databaseId,status \
+              -q '.[0].databaseId' 2>/dev/null || true)
+            if [[ -n "$run_id" ]]; then
+              status=$(gh run view "$run_id" --json status,conclusion \
+                -q '.status + ":" + (.conclusion // "")')
+              echo "Android run $run_id -> $status"
+              case "$status" in
+                completed:success) break ;;
+                completed:*) echo "Android run did not succeed"; exit 1 ;;
+                *) ;;
+              esac
+            fi
+            sleep 30
+          done
+          [[ -n "$run_id" ]] || { echo "Android Release run never started"; exit 1; }
+
+      - name: Resolve release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The release tag for this commit was bumped by the Android job:
+          # fetch its commit, then read the version back from pubspec.yaml.
+          git fetch origin main
+          git show origin/main:pubspec.yaml | \
+            sed -n 's/^version:[[:space:]]*\([0-9.]*\)+.*/tag=v\1/p' | head -1 \
+            > tag.txt
+          tag=$(cat tag.txt)
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Could not resolve release tag from pubspec.yaml"; exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build iOS app (unsigned, no codesign)
+        run: |
+          flutter build ios --release --no-codesign
+
+      - name: Package .ipa
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          app=$(find build/ios/iphoneos -name "Runner.app" -maxdepth 1)
+          mkdir -p Payload
+          cp -R "$app" Payload/
+          zip -qry "caputune-${RELEASE_TAG}-ios-unsigned.ipa" Payload
+          rm -rf Payload
+          shasum -a 256 "caputune-${RELEASE_TAG}-ios-unsigned.ipa" \
+            > "caputune-${RELEASE_TAG}-ios-unsigned.ipa.sha256"
+
+      - name: Attach .ipa to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Retry a few times in case the release was created milliseconds ago.
+          for i in 1 2 3 4 5; do
+            if gh release upload "$RELEASE_TAG" \
+              "caputune-${RELEASE_TAG}-ios-unsigned.ipa" \
+              "caputune-${RELEASE_TAG}-ios-unsigned.ipa.sha256" \
+              --clobber; then
+              echo "Attached iOS assets to ${RELEASE_TAG}"
+              exit 0
+            fi
+            echo "Release ${RELEASE_TAG} not ready yet (attempt $i)"; sleep 20
+          done
+          echo "Could not attach iOS assets"; exit 1
