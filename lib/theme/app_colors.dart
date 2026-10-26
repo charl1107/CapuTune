@@ -16,9 +16,42 @@ class AppColors {
 
   // Surface colors
   static const Color surfaceLight = Color(0xFFFFFBFE);
-  static const Color surfaceDark = Color(0xFF1C1B1F);
+  // Purple-tinted charcoal so cards read as lifted glass, not gray plastic.
+  static const Color surfaceDark = Color(0xFF171221);
   static const Color surfaceVariantLight = Color(0xFFE7E0EC);
   static const Color surfaceVariantDark = Color(0xFF49454F);
+
+  // Premium ambient palette: near-black charcoal base with deep-purple /
+  // midnight-indigo lift. Used by the page background, never as a banner.
+  static const Color charcoalDeep = Color(0xFF0B0912);
+  static const Color charcoalMid = Color(0xFF141120);
+  static const Color ambientViolet = Color(0xFF7C4DFF);
+  static const Color ambientIndigo = Color(0xFF3F51B5);
+
+  // Glass surfaces. Fills are gradients (top edge slightly brighter for the
+  // gentle edge highlight); borders are low-contrast hairlines; shadow is
+  // deliberately restrained. No heavy glows, no thick borders.
+  static const List<Color> glassFillDark = [
+    Color(0x2E201A33), // ~18% purple-charcoal at the top edge
+    Color(0x1F171226), // ~12% at the bottom edge
+  ];
+  static const List<Color> glassFillLight = [
+    Color(0xE6FFFFFF), // ~90% white at the top edge
+    Color(0xCCFFFFFF), // ~80% at the bottom edge
+  ];
+  static const Color glassBorderDark = Color(0x24FFFFFF);
+  static const Color glassBorderLight = Color(0x1A6750A4);
+
+  static const LinearGradient glassGradientDark = LinearGradient(
+    colors: glassFillDark,
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+  );
+  static const LinearGradient glassGradientLight = LinearGradient(
+    colors: glassFillLight,
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+  );
 
   // Status colors
   static const Color success = Color(0xFF4CAF50);

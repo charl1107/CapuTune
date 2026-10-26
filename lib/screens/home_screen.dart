@@ -6,6 +6,8 @@ import '../services/update_service.dart';
 import '../models/song.dart';
 import '../widgets/song_card.dart';
 import '../widgets/update_dialog.dart';
+import '../widgets/ambient_background.dart';
+import '../widgets/glass_container.dart';
 import '../theme/app_colors.dart';
 import 'search_screen.dart';
 import 'library_screen.dart';
@@ -103,116 +105,47 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildHomeContent(PlayerService playerService) {
     final updateService = context.watch<UpdateService>();
 
-    return CustomScrollView(
-      slivers: [
-        // Hero header
-        SliverAppBar(
-          expandedHeight: 180,
-          pinned: true,
-          flexibleSpace: FlexibleSpaceBar(
-            // Left-align the title block instead of FlexibleSpaceBar's
-            // default 72dp toolbar indent, so the logo + app name line up
-            // with the 24dp horizontal padding used by the content below.
-            centerTitle: false,
-            titlePadding: const EdgeInsetsDirectional.only(
-              start: AppColors.spacingL,
-              bottom: 14,
-            ),
-            title: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: Image.asset(
-                    'assets/images/logo.jpg',
-                    width: 28,
-                    height: 28,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Flexible so a narrow screen ellipsizes instead of
-                // overflowing the app bar.
-                const Flexible(
-                  child: Text(
-                    'CapuTune',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 24,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            background: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Color(0xFF6C63FF),
-                    Color(0xFF9C27B0),
-                    Color(0xFFE91E63),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-              child: Stack(
-                children: [
-                  // Decorative circles
-                  Positioned(
-                    top: -30,
-                    right: -30,
-                    child: Container(
-                      width: 120,
-                      height: 120,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white.withValues(alpha: 0.1),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    bottom: -20,
-                    left: -20,
-                    child: Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white.withValues(alpha: 0.08),
-                      ),
-                    ),
-                  ),
-                  // Music note icon
-                  Center(
-                    child: Icon(
-                      Icons.music_note_rounded,
-                      size: 100,
-                      color: Colors.white.withValues(alpha: 0.15),
-                    ),
-                  ),
-                ],
+    // Ambient background wraps the whole scroll view so the charcoal +
+    // violet lighting is continuous behind every section (§3) — the light
+    // comes from the page, not from a banner.
+    return AmbientBackground(
+      child: CustomScrollView(
+        slivers: [
+          // Compact title row (§1/§2): plain AppBar, no expanded hero, no
+          // gradient, no decorative shapes, no in-app logo image. The
+          // launcher icon (Android manifest) is unaffected by this.
+          SliverAppBar(
+            pinned: true,
+            toolbarHeight: 56,
+            title: const Text(
+              'CapuTune',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 24,
               ),
             ),
+            actions: [
+              // Theme toggle kept compact: default 48dp tap target with a
+              // tighter visual glyph, right-aligned as before.
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  playerService.isDarkMode
+                      ? Icons.light_mode
+                      : Icons.dark_mode,
+                ),
+                onPressed: () => playerService.toggleDarkMode(),
+              ),
+              const SizedBox(width: AppColors.spacingS),
+            ],
           ),
-          actions: [
-            IconButton(
-              icon: Icon(
-                playerService.isDarkMode ? Icons.light_mode : Icons.dark_mode,
-                color: Colors.white,
-              ),
-              onPressed: () => playerService.toggleDarkMode(),
+          // Update banner (non-intrusive, dismissible)
+          if (updateService.state == UpdateState.updateAvailable)
+            SliverToBoxAdapter(
+              child: _UpdateBanner(updateService: updateService),
             ),
-          ],
-        ),
-        // Update banner (non-intrusive, dismissible)
-        if (updateService.state == UpdateState.updateAvailable)
-          SliverToBoxAdapter(
-            child: _UpdateBanner(updateService: updateService),
-          ),
         // Recently Played section
         SliverToBoxAdapter(
           child: _buildSection(
@@ -244,6 +177,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
       ],
+      ),
     );
   }
 
@@ -253,10 +187,9 @@ class _HomeScreenState extends State<HomeScreen> {
     required String emptyMessage,
     required PlayerService playerService,
   }) {
-    // Vertical rhythm: 8px above the heading (plus the previous section's
-    // 16px bottom padding = 24px between sections), 16px below before the
-    // cards. This replaces the old uniform 24px padding which left a ~48px
-    // dead band between sections.
+    // Vertical rhythm: 8px above the heading, 8px heading→cards, and a 16px
+    // bottom pad — so consecutive sections sit 24px apart with no dead band.
+    // Content moves up into the space the old 180px banner reserved.
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppColors.spacingL,
@@ -283,12 +216,16 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               if (songs.isNotEmpty)
                 TextButton(
+                  // Compact "See all" keeps the heading row one visual line.
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: () {},
                   child: const Text('See all'),
                 ),
             ],
           ),
-          const SizedBox(height: AppColors.spacingM),
+          const SizedBox(height: AppColors.spacingS),
           if (songs.isEmpty)
             Container(
               padding: const EdgeInsets.all(AppColors.spacingXL),
@@ -310,8 +247,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             )
           else
+            // Artwork row: height derives from the card itself instead of a
+            // fixed 220px box, so no space is reserved below the cards.
             SizedBox(
-              height: 220,
+              height: SongCard.compactCardHeight,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 itemCount: songs.length,
@@ -347,66 +286,65 @@ class _UpdateBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(
+    // Glass surface with opt-in background blur: this banner floats over
+    // scrolling content, so it is one of the few justified BackdropFilters
+    // (§3). Gradient container replaced with translucent glass + hairline.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
         AppColors.spacingL,
         AppColors.spacingM,
         AppColors.spacingL,
         0,
       ),
-      padding: const EdgeInsets.all(AppColors.spacingM),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Theme.of(context).colorScheme.primaryContainer,
-            Theme.of(context).colorScheme.secondaryContainer,
+      child: GlassContainer(
+        blur: true,
+        padding: const EdgeInsets.all(AppColors.spacingM),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(AppColors.spacingS),
+              decoration: BoxDecoration(
+                color: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(AppColors.radiusS),
+              ),
+              child: Icon(
+                Icons.system_update,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(width: AppColors.spacingM),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Update available',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: AppColors.spacingXS),
+                  Text(
+                    'Version ${updateService.latestVersion} is ready',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: () => updateService.dismissUpdate(),
+              child: const Text('Later'),
+            ),
+            FilledButton(
+              onPressed: () => showUpdateOffer(context, updateService),
+              child: const Text('Update'),
+            ),
           ],
         ),
-        borderRadius: BorderRadius.circular(AppColors.radiusL),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(AppColors.spacingS),
-            decoration: BoxDecoration(
-              color:
-                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(AppColors.radiusS),
-            ),
-            child: Icon(
-              Icons.system_update,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          ),
-          const SizedBox(width: AppColors.spacingM),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Update available',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: AppColors.spacingXS),
-                Text(
-                  'Version ${updateService.latestVersion} is ready',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          TextButton(
-            onPressed: () => updateService.dismissUpdate(),
-            child: const Text('Later'),
-          ),
-          FilledButton(
-            onPressed: () => showUpdateOffer(context, updateService),
-            child: const Text('Update'),
-          ),
-        ],
       ),
     );
   }

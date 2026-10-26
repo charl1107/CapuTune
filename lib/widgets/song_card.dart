@@ -12,6 +12,12 @@ class SongCard extends StatefulWidget {
   final VoidCallback? onTap;
   final bool isCompact;
 
+  /// Artwork edge for the compact (home screen) card. ~160–180dp square on
+  /// typical phones; shrinks slightly on narrow screens via [compactArtwork]
+  /// instead of stretching.
+  static const double compactCardHeight = 214;
+  static const double compactArtwork = 168;
+
   const SongCard({
     super.key,
     required this.song,
@@ -56,6 +62,17 @@ class _SongCardState extends State<SongCard>
   }
 
   Widget _buildCompactCard(BuildContext context) {
+    // Responsive artwork edge: 168dp on typical phones, stepped down on
+    // narrow screens and up on tablets so the square stays in the 160-180dp
+    // target band without stretching or overflow.
+    final media = MediaQuery.of(context);
+    final edge = media.size.width < 340
+        ? SongCard.compactArtwork - 12
+        : media.size.width > 700
+            ? SongCard.compactArtwork + 8
+            : SongCard.compactArtwork;
+    final artSize = edge - 2 * AppColors.spacingS; // inside the card padding
+
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
@@ -76,67 +93,55 @@ class _SongCardState extends State<SongCard>
           },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
-            width: 160,
+            width: edge,
             padding: const EdgeInsets.all(AppColors.spacingS),
+            // Glass recipe: translucent gradient fill + hairline border, no
+            // BackdropFilter (this tile scrolls in a list - blur here would
+            // be expensive and pointless). Artwork stays crisp and
+            // unobstructed.
             decoration: BoxDecoration(
-              color: _isHovered
-                  ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
-                  : Theme.of(context).colorScheme.surface,
+              gradient: Theme.of(context).brightness == Brightness.dark
+                  ? AppColors.glassGradientDark
+                  : AppColors.glassGradientLight,
               borderRadius: BorderRadius.circular(AppColors.radiusM),
+              border: Border.all(
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? AppColors.glassBorderDark
+                    : AppColors.glassBorderLight,
+                width: 0.5,
+              ),
               boxShadow: _isHovered ? AppColors.cardShadow : null,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Album art with shadow
-                Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(AppColors.radiusM),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: _isHovered ? 0.3 : 0.2),
-                        blurRadius: _isHovered ? 16 : 8,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(AppColors.radiusM),
-                    child: widget.song.thumbnail != null
-                        ? CachedNetworkImage(
-                            imageUrl: widget.song.thumbnail!,
-                            width: 144,
-                            height: 144,
-                            fit: BoxFit.cover,
-                            placeholder: (context, url) => Container(
-                              width: 144,
-                              height: 144,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Theme.of(context).colorScheme.primaryContainer,
-                                    Theme.of(context).colorScheme.secondaryContainer,
-                                  ],
-                                ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(AppColors.radiusS),
+                  child: widget.song.thumbnail != null
+                      ? CachedNetworkImage(
+                          imageUrl: widget.song.thumbnail!,
+                          width: artSize,
+                          height: artSize,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(
+                            width: artSize,
+                            height: artSize,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  Theme.of(context)
+                                      .colorScheme
+                                      .primaryContainer,
+                                  Theme.of(context)
+                                      .colorScheme
+                                      .secondaryContainer,
+                                ],
                               ),
                             ),
-                            errorWidget: (context, url, error) => Container(
-                              width: 144,
-                              height: 144,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Theme.of(context).colorScheme.primary,
-                                    Theme.of(context).colorScheme.secondary,
-                                  ],
-                                ),
-                              ),
-                              child: const Icon(Icons.music_note, color: Colors.white),
-                            ),
-                          )
-                        : Container(
-                            width: 144,
-                            height: 144,
+                          ),
+                          errorWidget: (context, url, error) => Container(
+                            width: artSize,
+                            height: artSize,
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [
@@ -145,11 +150,26 @@ class _SongCardState extends State<SongCard>
                                 ],
                               ),
                             ),
-                            child: const Icon(Icons.music_note, color: Colors.white),
+                            child: const Icon(Icons.music_note,
+                                color: Colors.white),
                           ),
-                  ),
+                        )
+                      : Container(
+                          width: artSize,
+                          height: artSize,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Theme.of(context).colorScheme.primary,
+                                Theme.of(context).colorScheme.secondary,
+                              ],
+                            ),
+                          ),
+                          child: const Icon(Icons.music_note,
+                              color: Colors.white),
+                        ),
                 ),
-                const SizedBox(height: AppColors.spacingS),
+                const SizedBox(height: AppColors.spacingXS),
                 Text(
                   widget.song.title,
                   style: const TextStyle(
@@ -159,7 +179,8 @@ class _SongCardState extends State<SongCard>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: AppColors.spacingXS),
+                // 2px title-artist gap so the text block hugs the artwork.
+                const SizedBox(height: 2),
                 Text(
                   widget.song.artist,
                   style: TextStyle(
