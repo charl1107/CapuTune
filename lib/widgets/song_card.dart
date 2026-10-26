@@ -13,11 +13,12 @@ class SongCard extends StatefulWidget {
   final bool isCompact;
 
   /// Compact (home screen) card metrics. The original card was 160dp wide
-  /// with 144dp art inside a 220dp row; the compact card is smaller on every
-  /// axis: 144dp card, 128dp artwork, 190dp row. [compactArtwork] steps down
-  /// 12dp on narrow screens and up 12dp on tablets via [_buildCompactCard].
-  static const double compactCardHeight = 190;
-  static const double compactArtwork = 144;
+  /// with 144dp art inside a 220dp row; the compact card is much smaller on
+  /// every axis: 104dp card, 88dp artwork, 146dp row (three cards fit on a
+  /// typical 390-412dp phone). [compactArtwork] steps down 12dp on narrow
+  /// screens and up 12dp on tablets via [_buildCompactCard].
+  static const double compactCardHeight = 146;
+  static const double compactArtwork = 104;
 
   const SongCard({
     super.key,
@@ -63,7 +64,7 @@ class _SongCardState extends State<SongCard>
   }
 
   Widget _buildCompactCard(BuildContext context) {
-    // Responsive artwork edge: 144dp on typical phones, stepped down on
+    // Responsive artwork edge: 104dp on typical phones, stepped down on
     // narrow screens and up on tablets so the square scales without
     // stretching or overflow.
     final media = MediaQuery.of(context);
@@ -175,7 +176,7 @@ class _SongCardState extends State<SongCard>
                   widget.song.title,
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 14,
+                    fontSize: 13,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -185,7 +186,7 @@ class _SongCardState extends State<SongCard>
                 Text(
                   widget.song.artist,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11,
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                   maxLines: 1,

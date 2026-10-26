@@ -194,8 +194,8 @@ void main() {
     final cardRect = tester.getRect(find.byType(SongCard).first);
     expect(cardRect.width, SongCard.compactArtwork,
         reason: 'Card width must equal the 144dp design constant');
-    expect(cardRect.width, inExclusiveRange(140, 151),
-        reason: 'Compact card must be smaller than the old 160dp card');
+    expect(cardRect.width, inExclusiveRange(95, 115),
+        reason: 'Compact card must be much smaller than the old 160dp card');
     // Card height must accommodate art + text without dead space.
     expect(cardRect.height, SongCard.compactCardHeight);
 
@@ -219,9 +219,9 @@ void main() {
     final mostHeading = tester.getRect(find.text('Most Played'));
     // Sections must move up into the freed banner space. Distance between
     // consecutive headings = heading row 36 (compact See all) + 8 gap +
-    // 190 cards + 16 bottom pad + 8 top pad = 258; assert the rhythm stays
+    // 146 cards + 16 bottom pad + 8 top pad = 214; assert the rhythm stays
     // in that band, and that content starts far above the old 180px banner.
-    expect(mostHeading.top - recentHeading.top, inExclusiveRange(245, 275));
+    expect(mostHeading.top - recentHeading.top, inExclusiveRange(200, 230));
     expect(recentHeading.top, lessThan(200));
 
     // No oversized fixed box: the row height comes from SongCard's design
