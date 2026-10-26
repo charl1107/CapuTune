@@ -116,6 +116,19 @@ jobs:
         run: |
           flutter build ios --release --no-codesign
 
+      - name: Package .ipa
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          app=$(find build/ios/iphoneos -name "Runner.app" -maxdepth 1)
+          mkdir -p Payload
+          cp -R "$app" Payload/
+          zip -qry "caputune-${RELEASE_TAG}-ios-unsigned.ipa" Payload
+          rm -rf Payload
+          shasum -a 256 "caputune-${RELEASE_TAG}-ios-unsigned.ipa" \
+            > "caputune-${RELEASE_TAG}-ios-unsigned.ipa.sha256"
+
       - name: Verify IPA version matches the release tag
         env:
           RELEASE_TAG: ${{ steps.tag.outputs.tag }}
@@ -132,19 +145,11 @@ jobs:
           unzip -l "caputune-${RELEASE_TAG}-ios-unsigned.ipa" \
             | grep -q 'Payload/Runner.app/Info.plist' \
             || { echo "ERROR: IPA is missing Payload/Runner.app/Info.plist"; exit 1; }
-
-      - name: Package .ipa
-        env:
-          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          set -euo pipefail
-          app=$(find build/ios/iphoneos -name "Runner.app" -maxdepth 1)
-          mkdir -p Payload
-          cp -R "$app" Payload/
-          zip -qry "caputune-${RELEASE_TAG}-ios-unsigned.ipa" Payload
-          rm -rf Payload
-          shasum -a 256 "caputune-${RELEASE_TAG}-ios-unsigned.ipa" \
-            > "caputune-${RELEASE_TAG}-ios-unsigned.ipa.sha256"
+          unzip -p "caputune-${RELEASE_TAG}-ios-unsigned.ipa" \
+            'Payload/Runner.app/Info.plist' > ipa-info.plist
+          cmp -s ipa-info.plist "$plist" \
+            || { echo "ERROR: packaged Info.plist differs from the built app"; exit 1; }
+          echo "Packaged Info.plist matches the built app ($version)"
 
       - name: Attach .ipa to the GitHub Release
         env:
