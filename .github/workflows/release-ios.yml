@@ -97,9 +97,41 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Check out the release commit
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # The tag points at the Android workflow's version-bump commit, which
+          # contains the exact code being released. Build that commit instead of
+          # the pre-bump commit checked out by the runner, otherwise the app's
+          # embedded CFBundleShortVersionString lags the release tag.
+          git fetch --force origin \
+            "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          git checkout --detach "$RELEASE_TAG"
+          grep -m1 "^version:" pubspec.yaml
+          flutter pub get
+
       - name: Build iOS app (unsigned, no codesign)
         run: |
           flutter build ios --release --no-codesign
+
+      - name: Verify IPA version matches the release tag
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          plist="build/ios/iphoneos/Runner.app/Info.plist"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")
+          echo "Built version: $version ($build), release tag: $RELEASE_TAG"
+          if [[ "v$version" != "$RELEASE_TAG" ]]; then
+            echo "ERROR: built version v$version does not match release $RELEASE_TAG"
+            exit 1
+          fi
+          unzip -l "caputune-${RELEASE_TAG}-ios-unsigned.ipa" \
+            | grep -q 'Payload/Runner.app/Info.plist' \
+            || { echo "ERROR: IPA is missing Payload/Runner.app/Info.plist"; exit 1; }
 
       - name: Package .ipa
         env:
