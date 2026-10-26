@@ -3,6 +3,13 @@
 The CapuTune Flutter app — a cross-platform music player (Android, iOS, web,
 and desktop) with a shared codebase in `lib/`.
 
+## Attributions
+
+- Search results are provided by YouTube Music; the Dart-native search
+  client in `lib/services/ytm/` is adapted from
+  [ytmusicapi](https://github.com/sigma67/ytmusicapi) (MIT License,
+  Copyright (c) sigma67).
+
 ## Features
 
 - Search, stream, and play music with full player controls

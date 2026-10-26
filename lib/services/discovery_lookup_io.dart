@@ -1,6 +1,7 @@
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../models/song.dart';
+import 'ytm/ytm_search_client.dart';
 
 // Re-exported so `discovery_service_test.dart` can construct a `Video` for
 // the mapping test without importing `youtube_explode_dart` itself: the
@@ -48,22 +49,40 @@ String? _extractPlaylistId(String url) {
   return uri.queryParameters['list'];
 }
 
-/// Searches YouTube for [query] and returns the results as [Song]s.
+/// Searches YouTube Music's song catalog for [query] and returns the
+/// results as [Song]s.
+///
+/// Delegates to the Dart-native YTM client ([YtmSearchClient], songs
+/// filter): catalog results carry album, duration, and clean artist
+/// attribution, unlike the generic YouTube search used before. The
+/// returned [Song.id] is the same YouTube videoId the existing
+/// youtube_explode-based resolver already streams, so playback is
+/// untouched.
 ///
 /// Any failure (network, parsing, extraction) is swallowed and reported as
 /// an empty list so callers never see an exception.
 Future<List<Song>> searchRemote(String query) async {
   try {
-    final yt = YoutubeExplode();
-    try {
-      final videos = await yt.search.search(query);
-      return videos.map(songFromVideo).toList();
-    } finally {
-      yt.close();
-    }
+    final results = await YtmSearchClient().searchSongs(query);
+    return results.map(songFromYtm).toList();
   } catch (_) {
     return [];
   }
+}
+
+/// Maps a [YtmSongResult] onto a [Song].
+///
+/// Internal to this lookup file: not re-exported by `discovery_service.dart`,
+/// so only this module (and its test) can reach it.
+Song songFromYtm(YtmSongResult r) {
+  return Song(
+    id: r.id,
+    title: r.title,
+    artist: r.artist,
+    album: r.album,
+    thumbnail: r.thumbnailUrl,
+    duration: r.duration,
+  );
 }
 
 /// Imports the videos of the YouTube playlist at [url] as [Song]s.

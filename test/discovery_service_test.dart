@@ -6,7 +6,9 @@
 // acceptance test.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:caputune/models/song.dart';
 import 'package:caputune/services/discovery_lookup_io.dart';
+import 'package:caputune/services/ytm/ytm_search_parser.dart';
 
 void main() {
   group('formatDuration', () {
@@ -62,6 +64,40 @@ void main() {
       );
       expect(song.duration, '3:35');
       expect(song.album, isNull);
+    });
+  });
+
+  group('songFromYtm', () {
+    test('maps YtmSongResult fields onto Song', () {
+      const result = YtmSongResult(
+        id: 'rj5wZqReXQE',
+        title: 'Wonderwall',
+        artist: 'Oasis',
+        album: "(What's The Story) Morning Glory? (Remastered)",
+        duration: '4:19',
+        thumbnailUrl: 'https://yt3.googleusercontent.com/abc=w120-h120-l90-rj',
+      );
+
+      final song = songFromYtm(result);
+      expect(song, isA<Song>());
+      expect(song.id, 'rj5wZqReXQE');
+      expect(song.title, 'Wonderwall');
+      expect(song.artist, 'Oasis');
+      expect(song.album, "(What's The Story) Morning Glory? (Remastered)");
+      expect(song.duration, '4:19');
+      expect(song.thumbnail,
+          'https://yt3.googleusercontent.com/abc=w120-h120-l90-rj');
+      expect(song.localPath, isNull);
+      expect(song.localSourcePath, isNull);
+    });
+
+    test('omitted YTM fields map to null Song fields', () {
+      final song =
+          songFromYtm(const YtmSongResult(id: 'x', title: 'T', artist: ''));
+
+      expect(song.album, isNull);
+      expect(song.duration, isNull);
+      expect(song.thumbnail, isNull);
     });
   });
 }
