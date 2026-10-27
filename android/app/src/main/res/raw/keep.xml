@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Resources fetched only via Resources.getIdentifier() at runtime (audio_service
+  resolves its config strings from Dart this way). The release resource shrinker,
+  which the Flutter Gradle plugin force-enables, cannot see those references and
+  strips the resources - which crashed playback the moment the media notification
+  first posted (setSmallIcon with a resource id of 0 is rejected by Android).
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_notification,@drawable/audio_service_*" />
