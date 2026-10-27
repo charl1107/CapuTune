@@ -3,6 +3,11 @@
          manifest; release builds must declare it here. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Foreground service and background audio permissions -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
     <!-- Lets the app hand a *verified* update to Android's package installer.
          It does not allow silent installs: the system always shows its own
          confirmation dialog and verifies the APK signature. -->
@@ -37,6 +42,25 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!-- AudioService declaration for background playback & Android Media Notification -->
+        <service
+            android:name="com.ryanheise.audioservice.AudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
         <!-- Shares the verified update APK from app-private cache with the
              system installer via a content:// URI. Not exported. -->
         <provider

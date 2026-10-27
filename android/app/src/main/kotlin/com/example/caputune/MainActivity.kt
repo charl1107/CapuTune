@@ -7,13 +7,13 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
-import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.security.MessageDigest
 
-class MainActivity : FlutterActivity() {
+class MainActivity : AudioServiceActivity() {
     private companion object {
         const val CHANNEL = "com.example.caputune/installer"
         const val APK_MIME = "application/vnd.android.package-archive"

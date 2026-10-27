@@ -1,9 +1,13 @@
+import 'dart:io';
+import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/home_screen.dart';
+import 'services/audio_handler.dart';
 import 'services/player_service.dart';
 import 'services/download_service.dart';
 import 'services/storage_service.dart';
@@ -33,10 +37,33 @@ void main() async {
   // edit to stay in sync.
   await updateService.loadCurrentVersion();
 
+  final playerService = PlayerService();
+
+  // Initialize Android / system MediaSession via AudioService if supported
+  if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+    try {
+      await AudioService.init(
+        builder: () => CapuTuneAudioHandler(playerService),
+        config: const AudioServiceConfig(
+          androidNotificationChannelId: 'com.example.caputune.playback',
+          androidNotificationChannelName: 'CapuTune Music Playback',
+          androidNotificationChannelDescription:
+              'Active playback notification for CapuTune music player',
+          androidNotificationIcon: 'mipmap/ic_launcher',
+          androidShowNotificationBadge: true,
+          androidStopForegroundOnPause: false,
+          notificationColor: Color(0xFF1E1E2E),
+        ),
+      );
+    } catch (e) {
+      debugPrint('[audio_service] init error: $e');
+    }
+  }
+
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => PlayerService()),
+        ChangeNotifierProvider.value(value: playerService),
         ChangeNotifierProvider(create: (_) => DownloadService()),
         ChangeNotifierProvider(create: (_) => ThemeService()),
         ChangeNotifierProvider.value(value: updateService),
