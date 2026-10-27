@@ -23,6 +23,7 @@ import 'package:caputune/screens/search_screen.dart';
 import 'package:caputune/services/download_service.dart';
 import 'package:caputune/services/player_service.dart';
 import 'package:caputune/services/storage_service.dart';
+import 'package:caputune/services/theme_service.dart';
 import 'package:caputune/theme/app_theme.dart';
 
 Song _song(String id) =>
@@ -75,6 +76,7 @@ Future<void> _pumpScreen(
         ChangeNotifierProvider<PlayerService>.value(
           value: _FakePlayerService(),
         ),
+        ChangeNotifierProvider<ThemeService>(create: (_) => ThemeService()),
         // SongCard watches DownloadService; the real service is inert until a
         // download starts, which these tests never do.
         ChangeNotifierProvider<DownloadService>(create: (_) => DownloadService()),

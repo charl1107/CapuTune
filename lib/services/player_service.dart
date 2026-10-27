@@ -8,17 +8,42 @@ import '../models/song.dart';
 import 'stream_resolver.dart';
 import 'storage_service.dart';
 import 'cipher_service.dart';
+import 'recommendation_service.dart';
 import '../utils/snackbar.dart';
 
 enum RepeatMode { off, all, one }
+
+/// Resolves similar tracks for smart autoplay. Injectable so tests never hit
+/// the network.
+typedef SimilarSongsResolver = Future<List<Song>> Function({
+  required Song seed,
+  required Set<String> excludedIds,
+  required int limit,
+});
 
 class PlayerService extends ChangeNotifier {
   /// media_kit (libmpv) engine: all network streaming and legacy .mp3 files.
   /// Its own HTTP stack (libcurl) bypasses ExoPlayer, which fails to load
   /// googlevideo streams on the target device.
-  final Player _mk = Player(
-      configuration:
-          const PlayerConfiguration(logLevel: MPVLogLevel.info));
+  ///
+  /// The engine is created lazily so unit/widget tests never load libmpv.
+  final Player? _injectedPlayer;
+  Player? _lazyPlayer;
+
+  /// True while running under `flutter test`, where libmpv must not be loaded.
+  final bool _isTestEnv = Platform.environment.containsKey('FLUTTER_TEST');
+
+  /// The real playback engine (injected instance or lazily created one).
+  Player get _engine => _injectedPlayer ??
+      (_lazyPlayer ??= Player(
+        configuration:
+            const PlayerConfiguration(logLevel: MPVLogLevel.info)));
+
+  /// True when an engine instance already exists (no construction implied).
+  bool get _hasEngine => _injectedPlayer != null || _lazyPlayer != null;
+
+  /// True when the service is allowed to touch the real media engine.
+  bool get _engineUsable => _injectedPlayer != null || !_isTestEnv;
 
   /// just_audio engine: created lazily, used only for .ct encrypted files
   /// (RAM-only decrypt via [EncryptedAudioSource]). Never created on
@@ -37,16 +62,34 @@ class PlayerService extends ChangeNotifier {
   int _currentIndex = -1;
   bool _isDarkMode = false;
   bool _autoplay = true;
+  bool _continueWithSimilarAfterPlaylist = false;
+  bool _isPlaylistSource = false;
+  List<Song> _originalQueue = [];
+
+  /// Tracks appended by smart autoplay. Kept separate from [_originalQueue]
+  /// so a playlist's own tracks are never lost or silently replaced.
+  List<Song> _recommendedQueue = [];
+
+  /// Tracks queued by the user via "add to queue". These are manual choices
+  /// and are therefore preserved ahead of any recommendation lookup.
+  List<Song> _manualQueue = [];
+  bool _isLoadingRecommendations = false;
   String _audioQuality = '320kbps';
   bool _isPlaying = false;
   bool _shuffleMode = false;
   RepeatMode _repeatMode = RepeatMode.off;
   final StreamResolver _resolver;
 
+  /// Resolver used to find similar tracks at the end of a queue. Defaults to
+  /// the network-backed [RecommendationService]; tests inject a fake.
+  final SimilarSongsResolver? _similarSongsResolver;
+
   List<Song> get queue => List.unmodifiable(_queue);
   int get currentIndex => _currentIndex;
   bool get isDarkMode => _isDarkMode;
   bool get autoplay => _autoplay;
+  bool get continueWithSimilarAfterPlaylist => _continueWithSimilarAfterPlaylist;
+  bool get isPlaylistSource => _isPlaylistSource;
   String get audioQuality => _audioQuality;
   bool get isPlaying => _isPlaying;
   bool get shuffleMode => _shuffleMode;
@@ -58,11 +101,17 @@ class PlayerService extends ChangeNotifier {
 
   // Only the active engine is read: _local's branch is unreachable until
   // _usesLocalPlayback becomes true, which only happens after creation.
-  Duration get position =>
-      _usesLocalPlayback ? _local.position : _mk.state.position;
-  Duration get duration =>
-      (_usesLocalPlayback ? _local.duration : _mk.state.duration) ??
-      Duration.zero;
+  Duration get position {
+    if (_usesLocalPlayback) return _local.position;
+    if (!_engineUsable || !_hasEngine) return Duration.zero;
+    return _engine.state.position;
+  }
+
+  Duration get duration {
+    if (_usesLocalPlayback) return _local.duration ?? Duration.zero;
+    if (!_engineUsable || !_hasEngine) return Duration.zero;
+    return _engine.state.duration;
+  }
   Stream<Duration> get positionStream => _positionController.stream;
   Stream<Duration?> get durationStream => _durationController.stream;
 
@@ -84,30 +133,34 @@ class PlayerService extends ChangeNotifier {
     }();
   }
 
-  PlayerService({StreamResolver? resolver})
-      : _resolver = resolver ?? StreamResolver() {
+  PlayerService({
+    StreamResolver? resolver,
+    Player? player,
+    SimilarSongsResolver? similarSongsResolver,
+  })  : _resolver = resolver ?? StreamResolver(),
+        _injectedPlayer = player,
+        _similarSongsResolver = similarSongsResolver {
     _loadSettings();
-    _mk.stream.position.listen(_positionController.add);
-    _mk.stream.duration.listen(_durationController.add);
-    _mk.stream.playing.listen((p) {
+    if (_engineUsable) {
+      _initMpvListeners();
+    }
+  }
+
+  void _initMpvListeners() {
+    final engine = _engine;
+    engine.stream.position.listen(_positionController.add);
+    engine.stream.duration.listen(_durationController.add);
+    engine.stream.playing.listen((p) {
       _isPlaying = p;
       notifyListeners();
     });
-    _mk.stream.completed.listen((c) {
+    engine.stream.completed.listen((c) {
       if (c && _autoplay) {
         playNext();
       }
     });
-    // media_kit reports load failures on this stream rather than throwing
-    // from open(); surface them with the same popup contract as thrown errors,
-    // appended with mpv's last log lines so the on-device popup carries the
-    // real cause (e.g. "HTTP error 403", curl failures).
-    _mk.stream.error.listen((msg) {
+    engine.stream.error.listen((msg) {
       debugPrint('[mk] error: $msg');
-      // media_kit's message embeds the entire stream URL (hundreds of chars);
-      // the real cause is an earlier error-level log line. Abbreviate the
-      // message, then prefer error-level lines (URLs already stripped on
-      // capture) so the actual cause always fits in the popup.
       final brief = msg.length > 60 ? '${msg.substring(0, 60)}…' : msg;
       final errs = _mkLogTail.where((e) => e.startsWith('E|')).toList();
       final chosen = errs.isNotEmpty ? errs : _mkLogTail;
@@ -124,12 +177,9 @@ class PlayerService extends ChangeNotifier {
         _tryPlayLocal(s);
       }
     });
-    _mk.stream.log.listen((l) {
+    engine.stream.log.listen((l) {
       debugPrint('[mk] ${l.text}');
-      // Strip URLs: mpv's failure wrapper embeds the full stream URL and
-      // would swallow the whole popup window on its own.
       final text = l.text.replaceAll(RegExp(r'https?://\S+'), '<url>');
-      // mpv reports level as either a single letter or a full word.
       final lvl = l.level.trim().toLowerCase();
       final isErr = lvl.startsWith('e') || lvl.startsWith('f');
       _mkLogTail.add('${isErr ? 'E|' : '-|'}${l.prefix}: $text');
@@ -140,6 +190,8 @@ class PlayerService extends ChangeNotifier {
   Future<void> _loadSettings() async {
     _isDarkMode = StorageService.getDarkMode();
     _autoplay = StorageService.getAutoplay();
+    _continueWithSimilarAfterPlaylist =
+        StorageService.getContinueWithSimilarAfterPlaylist();
     _audioQuality = StorageService.getAudioQuality();
     notifyListeners();
   }
@@ -147,8 +199,14 @@ class PlayerService extends ChangeNotifier {
   Future<void> play(Song song) async {
     final index = _queue.indexWhere((s) => s.id == song.id);
     if (index == -1) {
-      _queue.add(song);
-      _currentIndex = _queue.length - 1;
+      // A song outside the current queue starts a fresh individual source:
+      // the previous playlist/queue is dropped rather than silently mixed in.
+      _queue = [song];
+      _originalQueue = [song];
+      _recommendedQueue = [];
+      _manualQueue = [];
+      _currentIndex = 0;
+      _isPlaylistSource = false;
     } else {
       _currentIndex = index;
     }
@@ -161,7 +219,9 @@ class PlayerService extends ChangeNotifier {
       final played = await _tryPlayLocal(song);
       if (played) return;
 
-      await _mk.stop();
+      if (_engineUsable) {
+        await _engine.stop();
+      }
       await _justAudio?.stop();
       _usesLocalPlayback = false;
       _isPlaying = false;
@@ -176,7 +236,7 @@ class PlayerService extends ChangeNotifier {
       if (played) return;
     }
 
-    // Stream on-device; web: resolver stub returns null -> web playback disabled until IFrame phase
+    // Stream on-device
     try {
       final audioUrl = await _resolver.resolve(song.id);
       if (audioUrl == null) {
@@ -188,31 +248,59 @@ class PlayerService extends ChangeNotifier {
       debugPrint('[play] resolve OK for ${song.id}, loading into media_kit');
       _mkLogTail.clear();
       _usesLocalPlayback = false;
-      await _mk.open(Media(audioUrl), play: true);
+      if (_engineUsable) {
+        await _engine.open(Media(audioUrl), play: true);
+      }
       StorageService.addRecentPlay(song);
       StorageService.incrementPlayCount(song.id);
       notifyListeners();
     } catch (e) {
       debugPrint('[play] playback error for ${song.id}: $e');
       showGlobalSnack('Playback error: $e');
-      // Stream failed - try local file as fallback (mobile only)
       if (!kIsWeb) {
         await _tryPlayLocal(song);
       }
     }
   }
 
-  Future<void> playList(List<Song> songs, {int startIndex = 0}) async {
-    _queue = List.from(songs);
-    _currentIndex = startIndex;
-    if (_queue.isNotEmpty) {
-      await play(_queue[_currentIndex]);
+  Future<void> playList(
+    List<Song> songs, {
+    int startIndex = 0,
+    bool isPlaylistSource = false,
+  }) async {
+    if (songs.isEmpty) {
+      await clearQueue();
+      return;
     }
+
+    _isPlaylistSource = isPlaylistSource;
+    _originalQueue = List.from(songs);
+    _recommendedQueue = [];
+
+    if (_shuffleMode && isPlaylistSource) {
+      // Shuffle ON for a playlist: the selected track anchors the head and
+      // only the *remaining* playlist tracks are shuffled. No recommendations
+      // are injected while shuffle is on.
+      final chosenSong = (startIndex >= 0 && startIndex < songs.length)
+          ? songs[startIndex]
+          : songs.first;
+      final remaining = List<Song>.from(songs)
+        ..removeWhere((s) => s.id == chosenSong.id);
+      remaining.shuffle();
+      _queue = [chosenSong, ...remaining];
+      _currentIndex = 0;
+    } else {
+      _queue = List.from(songs);
+      _currentIndex = startIndex.clamp(0, songs.length - 1);
+    }
+
+    await play(_queue[_currentIndex]);
   }
 
   bool addToQueue(Song song) {
     if (_queue.any((queuedSong) => queuedSong.id == song.id)) return false;
     _queue.add(song);
+    _manualQueue.add(song);
     notifyListeners();
     return true;
   }
@@ -239,12 +327,18 @@ class PlayerService extends ChangeNotifier {
   }
 
   Future<void> clearQueue() async {
-    await _mk.stop();
-    await _justAudio?.stop();
+    if (_engineUsable) {
+      await _engine.stop();
+      await _justAudio?.stop();
+    }
     _usesLocalPlayback = false;
     _isPlaying = false;
     _queue.clear();
+    _originalQueue.clear();
+    _recommendedQueue.clear();
+    _manualQueue.clear();
     _currentIndex = -1;
+    _isPlaylistSource = false;
     notifyListeners();
   }
 
@@ -252,26 +346,92 @@ class PlayerService extends ChangeNotifier {
     if (_queue.isEmpty) return;
 
     if (_repeatMode == RepeatMode.one) {
+      // Repeat One restarts the current track; it never advances the queue
+      // and never triggers a recommendation lookup.
       await seek(Duration.zero);
       if (_usesLocalPlayback) {
         await _local.play();
-      } else {
-        await _mk.play();
+      } else if (_engineUsable && _hasEngine) {
+        await _engine.play();
       }
       return;
     }
 
-    _currentIndex++;
-    if (_currentIndex >= _queue.length) {
+    final nextIndex = _currentIndex + 1;
+    if (nextIndex >= _queue.length) {
       if (_repeatMode == RepeatMode.all) {
+        // Repeat All wraps within the existing queue; recommendations are
+        // never fetched in this mode.
         _currentIndex = 0;
-      } else {
-        await stop();
+        await play(_queue[_currentIndex]);
         return;
       }
+
+      // End of the queue.
+      //
+      // Individual song: continue with similar songs when available.
+      // Playlist: only when the user opted in via
+      // "Continue with Similar Songs After Playlist".
+      final canAutoplaySimilar = _autoplay &&
+          _shuffleMode == false &&
+          (!_isPlaylistSource || _continueWithSimilarAfterPlaylist);
+
+      if (canAutoplaySimilar && !_isLoadingRecommendations && currentSong != null) {
+        _isLoadingRecommendations = true;
+        try {
+          final seed = currentSong!;
+          final excluded = <String>{
+            ..._queue.map((s) => s.id),
+            ..._manualQueue.map((s) => s.id),
+          };
+          final recommendations = await _findSimilarSongs(
+            seed: seed,
+            excludedIds: excluded,
+            limit: 5,
+          );
+          if (recommendations.isNotEmpty) {
+            // Recommendations are appended as a clearly separated tail; the
+            // original playlist/queue order is left untouched.
+            _recommendedQueue.addAll(recommendations);
+            _queue.addAll(recommendations);
+            _currentIndex = nextIndex;
+            notifyListeners();
+            await play(_queue[_currentIndex]);
+            return;
+          }
+        } catch (e) {
+          debugPrint('[autoplay] recommendation fetch error: $e');
+        } finally {
+          _isLoadingRecommendations = false;
+        }
+      }
+
+      // No recommendations available (or not allowed): fall back to the
+      // existing queue behavior and stop.
+      await stop();
+      return;
     }
 
+    _currentIndex = nextIndex;
     await play(_queue[_currentIndex]);
+  }
+
+  /// Looks up similar tracks for [seed]. Uses the injected resolver when
+  /// present, otherwise the network-backed recommendation service.
+  Future<List<Song>> _findSimilarSongs({
+    required Song seed,
+    required Set<String> excludedIds,
+    required int limit,
+  }) {
+    final resolver = _similarSongsResolver;
+    if (resolver != null) {
+      return resolver(seed: seed, excludedIds: excludedIds, limit: limit);
+    }
+    return RecommendationService.findSimilarSongs(
+      seed: seed,
+      excludedIds: excludedIds,
+      limit: limit,
+    );
   }
 
   Future<void> playPrevious() async {
@@ -288,26 +448,30 @@ class PlayerService extends ChangeNotifier {
       } else {
         await _local.play();
       }
+      return;
+    }
+    if (!_engineUsable || !_hasEngine) return;
+    if (_engine.state.playing) {
+      await _engine.pause();
     } else {
-      if (_mk.state.playing) {
-        await _mk.pause();
-      } else {
-        await _mk.play();
-      }
+      await _engine.play();
     }
   }
 
   Future<void> seek(Duration position) async {
+    if (!_engineUsable) return;
     if (_usesLocalPlayback) {
       await _local.seek(position);
-    } else {
-      await _mk.seek(position);
+    } else if (_hasEngine) {
+      await _engine.seek(position);
     }
   }
 
   Future<void> stop() async {
-    await _mk.stop();
-    await _justAudio?.stop();
+    if (_engineUsable) {
+      await _engine.stop();
+      await _justAudio?.stop();
+    }
     _currentIndex = -1;
     notifyListeners();
   }
@@ -324,6 +488,12 @@ class PlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setContinueWithSimilarAfterPlaylist(bool value) {
+    _continueWithSimilarAfterPlaylist = value;
+    StorageService.setContinueWithSimilarAfterPlaylist(value);
+    notifyListeners();
+  }
+
   void setAudioQuality(String quality) {
     _audioQuality = quality;
     StorageService.setAudioQuality(quality);
@@ -332,8 +502,61 @@ class PlayerService extends ChangeNotifier {
 
   void toggleShuffle() {
     _shuffleMode = !_shuffleMode;
+    if (_queue.isEmpty) {
+      notifyListeners();
+      return;
+    }
+
+    final current = currentSong;
     if (_shuffleMode) {
-      _queue.shuffle();
+      // Shuffle ON.
+      //
+      // For a playlist source only the *playlist's own* tracks are shuffled;
+      // recommendations and manual additions are held out so the playlist
+      // stays the source of truth. The currently playing track anchors the
+      // head so playback is never interrupted.
+      final base = _isPlaylistSource && _originalQueue.isNotEmpty
+          ? _originalQueue
+          : _queue.where((s) => !s.isRecommended).toList();
+
+      final rest = List<Song>.from(base);
+      if (current != null) {
+        rest.removeWhere((s) => s.id == current.id);
+      }
+      rest.shuffle();
+
+      final tail = _isPlaylistSource
+          ? _manualQueue
+          : _queue.where((s) => s.isRecommended).toList();
+
+      _queue = [
+        if (current != null) current,
+        ...rest,
+        ...tail.where((s) => current == null || s.id != current.id),
+      ];
+      _currentIndex = current != null ? 0 : -1;
+    } else {
+      // Shuffle OFF: restore the source order.
+      if (_isPlaylistSource && _originalQueue.isNotEmpty) {
+        final restored = List<Song>.from(_originalQueue);
+        final extras = [
+          ..._manualQueue,
+          ..._recommendedQueue,
+        ].where((s) => !restored.any((o) => o.id == s.id)).toList();
+        _queue = [...restored, ...extras];
+        if (current != null) {
+          final idx = _queue.indexWhere((s) => s.id == current.id);
+          _currentIndex = idx == -1 ? 0 : idx;
+        }
+      } else {
+        final restored = _queue.where((s) => !s.isRecommended).toList();
+        final extras = _queue.where((s) => s.isRecommended).toList();
+        _queue = [...restored, ...extras];
+        if (current != null) {
+          final idx = _queue.indexWhere((s) => s.id == current.id);
+          _currentIndex = idx == -1 ? 0 : idx;
+        }
+      }
     }
     notifyListeners();
   }
@@ -374,7 +597,9 @@ class PlayerService extends ChangeNotifier {
 
         _mkLogTail.clear();
         _usesLocalPlayback = false;
-        await _mk.open(Media(importedFile.path), play: true);
+        if (_engineUsable) {
+          await _engine.open(Media(importedFile.path), play: true);
+        }
         StorageService.addRecentPlay(song);
         StorageService.incrementPlayCount(song.id);
         notifyListeners();
@@ -397,53 +622,31 @@ class PlayerService extends ChangeNotifier {
       final legacyFile = File('${dir.path}/${song.id}.mp3');
       if (await legacyFile.exists()) {
         _usesLocalPlayback = false;
-        await _mk.open(Media(legacyFile.path), play: true);
+        if (_engineUsable) {
+          await _engine.open(Media(legacyFile.path), play: true);
+        }
         StorageService.addRecentPlay(song);
         StorageService.incrementPlayCount(song.id);
         notifyListeners();
         return true;
       }
-    } catch (e) {
-      // Local playback error, fallback to streaming
-    }
-    return false;
-  }
 
-  /// Check if a song has a local file (downloaded)
-  Future<bool> hasLocalFile(String songId) async {
-    if (kIsWeb) return false;
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final encFile = File('${dir.path}/$songId.ct');
-      if (await encFile.exists()) return true;
-      final mp3File = File('${dir.path}/$songId.mp3');
-      return await mp3File.exists();
+      return false;
     } catch (e) {
+      debugPrint('[_tryPlayLocal] failed for ${song.id}: $e');
       return false;
     }
   }
 
-  /// Get local file path for a downloaded song
-  Future<String?> getLocalPath(String songId) async {
-    if (kIsWeb) return null;
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final encFile = File('${dir.path}/$songId.ct');
-      if (await encFile.exists()) return encFile.path;
-      final mp3File = File('${dir.path}/$songId.mp3');
-      if (await mp3File.exists()) return mp3File.path;
-    } catch (e) {
-      // Ignore errors
-    }
-    return null;
-  }
-
   @override
   void dispose() {
-    _mk.dispose();
-    _justAudio?.dispose();
     _positionController.close();
     _durationController.close();
+    // Only dispose an engine that was actually created; never construct one
+    // just to tear it down.
+    _injectedPlayer?.dispose();
+    _lazyPlayer?.dispose();
+    _justAudio?.dispose();
     super.dispose();
   }
 }

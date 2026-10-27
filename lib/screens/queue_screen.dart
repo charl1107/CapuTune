@@ -25,11 +25,13 @@ class QueueScreen extends StatelessWidget {
         ],
       ),
       body: queue.isEmpty
-          ? const Center(
+          ? Center(
               child: Text(
                 'No songs in queue.\nPlay something to start!',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             )
           : ReorderableListView.builder(
@@ -42,7 +44,11 @@ class QueueScreen extends StatelessWidget {
                   key: ValueKey(song.id),
                   song: song,
                   onTap: () {
-                    playerService.playList(queue, startIndex: index);
+                    playerService.playList(
+                      queue,
+                      startIndex: index,
+                      isPlaylistSource: playerService.isPlaylistSource,
+                    );
                   },
                 );
               },

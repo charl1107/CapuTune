@@ -33,10 +33,29 @@ class StorageService {
   static bool getAutoplay() => _settingsBox.get('autoplay', defaultValue: true);
   static void setAutoplay(bool value) => _settingsBox.put('autoplay', value);
 
+  static bool getContinueWithSimilarAfterPlaylist() =>
+      _settingsBox.get('continueWithSimilarAfterPlaylist', defaultValue: false);
+  static void setContinueWithSimilarAfterPlaylist(bool value) =>
+      _settingsBox.put('continueWithSimilarAfterPlaylist', value);
+
   static String getAudioQuality() =>
       _settingsBox.get('audioQuality', defaultValue: '320kbps');
   static void setAudioQuality(String value) =>
       _settingsBox.put('audioQuality', value);
+
+  /// Generic typed settings access (theme system uses these).
+  ///
+  /// Defensive: a stored value of an unexpected type (e.g. a bool written
+  /// under a string key) falls back to [defaultValue] instead of throwing
+  /// during startup.
+  static T getSetting<T>(T defaultValue, {required String key}) {
+    final stored = _settingsBox.get(key);
+    if (stored is T) return stored;
+    return defaultValue;
+  }
+
+  static void setSetting<T>(T value, {required String key}) =>
+      _settingsBox.put(key, value);
 
   // ── Resilient JSON helpers ───────────────────────────────────────────
   //

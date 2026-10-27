@@ -8,6 +8,7 @@ import 'services/player_service.dart';
 import 'services/download_service.dart';
 import 'services/storage_service.dart';
 import 'services/update_service.dart';
+import 'services/theme_service.dart';
 import 'theme/app_theme.dart';
 import 'utils/snackbar.dart';
 
@@ -37,6 +38,7 @@ void main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => PlayerService()),
         ChangeNotifierProvider(create: (_) => DownloadService()),
+        ChangeNotifierProvider(create: (_) => ThemeService()),
         ChangeNotifierProvider.value(value: updateService),
       ],
       child: const CapuTuneApp(),
@@ -55,16 +57,16 @@ class CapuTuneApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<PlayerService>(
-      builder: (context, playerService, child) {
+    return Consumer<ThemeService>(
+      builder: (context, themeService, child) {
+        final tokens = themeService.colors;
         return MaterialApp(
           title: 'CapuTune',
           debugShowCheckedModeBanner: false,
           navigatorKey: rootNavigatorKey,
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
-          themeMode:
-              playerService.isDarkMode ? ThemeMode.dark : ThemeMode.light,
+          theme: AppTheme.fromTokens(tokens, dark: false),
+          darkTheme: AppTheme.fromTokens(tokens, dark: true),
+          themeMode: tokens.isDark ? ThemeMode.dark : ThemeMode.light,
           home: const HomeScreen(),
         );
       },

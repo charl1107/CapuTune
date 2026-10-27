@@ -2,19 +2,17 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../theme/app_colors.dart';
+import '../services/theme_service.dart';
 
-/// Full-screen ambient background: near-black charcoal base with restrained,
-/// softly blurred violet/indigo lighting.
+/// Full-screen background that respects the selected design style's visual characteristics.
 ///
-/// Cost model: one opaque base + three low-alpha radial blobs, painted once
-/// per frame with zero saveLayers and zero BackdropFilters — cheap enough to
-/// sit behind every tab. The page background stays continuous across screens
-/// (§3: no separate colorful banner).
-///
-/// RepaintBoundary keeps the effect out of the content's repaint path:
-/// scrolling content repaints on top of it without repainting the gradient.
+/// - Ambient UI: Rich atmospheric radial glow blobs, diffuse lighting.
+/// - Glassmorphism: Subtle soft glow behind translucent glass surfaces.
+/// - Cyberpunk / Neon: High-contrast void background with targeted vivid neon edge glow.
+/// - Premium UI: Restrained subtle warm glow, rich deep dark base.
+/// - Neo-brutalism: Flat solid architectural cream background, zero glow blobs.
 class AmbientBackground extends StatelessWidget {
   const AmbientBackground({super.key, required this.child});
 
@@ -22,20 +20,34 @@ class AmbientBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final base = isDark ? AppColors.charcoalDeep : AppColors.surfaceLight;
-    final violet = isDark
-        ? AppColors.ambientViolet.withValues(alpha: 0.10)
-        : AppColors.ambientViolet.withValues(alpha: 0.06);
-    final indigo = isDark
-        ? AppColors.ambientIndigo.withValues(alpha: 0.12)
-        : AppColors.ambientIndigo.withValues(alpha: 0.05);
+    final tokens = context.watch<ThemeService>().colors;
+    final base = tokens.background;
+
+    // Neo-brutalism relies on bold, solid, architectural surfaces without blur or glow.
+    if (tokens.glowStrength <= 0.05 || tokens.useHardShadow) {
+      return DecoratedBox(
+        decoration: BoxDecoration(color: base),
+        child: child,
+      );
+    }
+
+    final glowColor = tokens.glow;
+    final primaryGlow = glowColor.withValues(
+      alpha: (0.12 * tokens.glowStrength).clamp(0.0, 0.4),
+    );
+    final secondaryGlow = tokens.highlight.withValues(
+      alpha: (0.09 * tokens.glowStrength).clamp(0.0, 0.35),
+    );
 
     return DecoratedBox(
       decoration: BoxDecoration(color: base),
       child: RepaintBoundary(
         child: CustomPaint(
-          painter: _AmbientPainter(violet: violet, indigo: indigo),
+          painter: AmbientBackgroundPainter(
+            primaryGlow: primaryGlow,
+            secondaryGlow: secondaryGlow,
+            isCyberpunk: tokens.useNeonGlow,
+          ),
           child: child,
         ),
       ),
@@ -43,16 +55,23 @@ class AmbientBackground extends StatelessWidget {
   }
 }
 
-class _AmbientPainter extends CustomPainter {
-  const _AmbientPainter({required this.violet, required this.indigo});
+/// Paints the ambient glow layer for the active design style.
+///
+/// Public so tests can assert that a flat style (neo-brutalism) never
+/// installs a painter, while the atmospheric styles do.
+class AmbientBackgroundPainter extends CustomPainter {
+  const AmbientBackgroundPainter({
+    required this.primaryGlow,
+    required this.secondaryGlow,
+    required this.isCyberpunk,
+  });
 
-  final Color violet;
-  final Color indigo;
+  final Color primaryGlow;
+  final Color secondaryGlow;
+  final bool isCyberpunk;
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Lighting is anchored to the top of the screen where the content is
-    // sparsest (title row / section headings); artwork stays unobstructed.
     void blob(Offset center, double radius, Color color) {
       canvas.drawCircle(
         center,
@@ -66,37 +85,51 @@ class _AmbientPainter extends CustomPainter {
       );
     }
 
-    blob(
-      Offset(size.width * 0.85, size.height * 0.06),
-      size.width * 0.75,
-      violet,
-    );
-    blob(
-      Offset(size.width * 0.1, size.height * 0.22),
-      size.width * 0.65,
-      indigo,
-    );
-    // Faint floor glow ties the lower half to the palette without forming a
-    // bright shape behind the artwork grid.
-    blob(
-      Offset(size.width * 0.5, size.height * 1.05),
-      size.width * 0.9,
-      violet.withValues(alpha: 0.5),
-    );
+    if (isCyberpunk) {
+      // Cyberpunk: sharp, high-energy neon atmospheric bursts at the upper corner and bottom edge
+      blob(
+        Offset(size.width * 0.9, size.height * 0.04),
+        size.width * 0.65,
+        primaryGlow,
+      );
+      blob(
+        Offset(size.width * 0.1, size.height * 0.25),
+        size.width * 0.55,
+        secondaryGlow,
+      );
+      blob(
+        Offset(size.width * 0.5, size.height * 0.95),
+        size.width * 0.7,
+        primaryGlow.withValues(alpha: primaryGlow.a * 0.7),
+      );
+    } else {
+      // Ambient UI / Glassmorphism / Premium UI: Smooth, broad atmospheric lighting
+      blob(
+        Offset(size.width * 0.85, size.height * 0.06),
+        size.width * 0.75,
+        primaryGlow,
+      );
+      blob(
+        Offset(size.width * 0.1, size.height * 0.22),
+        size.width * 0.65,
+        secondaryGlow,
+      );
+      blob(
+        Offset(size.width * 0.5, size.height * 1.05),
+        size.width * 0.9,
+        primaryGlow.withValues(alpha: primaryGlow.a * 0.5),
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(_AmbientPainter old) =>
-      old.violet != violet || old.indigo != indigo;
+  bool shouldRepaint(AmbientBackgroundPainter old) =>
+      old.primaryGlow != primaryGlow ||
+      old.secondaryGlow != secondaryGlow ||
+      old.isCyberpunk != isCyberpunk;
 }
 
-/// Softly blurred violet halo rendered *behind* a glass panel. This is the
-/// "ambient lighting behind selected areas" from the design brief — placed
-/// behind selected glass (not behind artwork), limited to two halo layers
-/// per screen, painted as one radial gradient each (no saveLayer, no blur).
-///
-/// [haloColor] derives from the ambient palette; [haloOpacity] keeps it
-/// restrained by contract.
+/// Softly blurred halo rendered behind selected cards/panels.
 class AmbientHalo extends StatelessWidget {
   const AmbientHalo({
     super.key,
@@ -109,10 +142,14 @@ class AmbientHalo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final color = isDark
-        ? AppColors.ambientViolet.withValues(alpha: haloOpacity)
-        : AppColors.ambientViolet.withValues(alpha: haloOpacity * 0.5);
+    final tokens = context.watch<ThemeService>().colors;
+    if (tokens.glowStrength <= 0.05 || tokens.useHardShadow) {
+      return child;
+    }
+
+    final color = tokens.glow.withValues(
+      alpha: haloOpacity * tokens.glowStrength,
+    );
 
     return Stack(
       children: [
@@ -143,7 +180,7 @@ class _HaloPainter extends CustomPainter {
       Paint()
         ..shader = ui.Gradient.radial(
           rect.center,
-          maxDim * 0.9,
+          maxDim * 0.75,
           [color, color.withValues(alpha: 0)],
         ),
     );

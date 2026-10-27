@@ -8,6 +8,9 @@ class Song {
   final String? localPath;
   final String? localSourcePath;
 
+  /// True when this song was appended via recommendation / similar-song autoplay.
+  final bool isRecommended;
+
   Song({
     required this.id,
     required this.title,
@@ -17,7 +20,32 @@ class Song {
     this.duration,
     this.localPath,
     this.localSourcePath,
+    this.isRecommended = false,
   });
+
+  Song copyWith({
+    String? id,
+    String? title,
+    String? artist,
+    String? album,
+    String? thumbnail,
+    String? duration,
+    String? localPath,
+    String? localSourcePath,
+    bool? isRecommended,
+  }) {
+    return Song(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      artist: artist ?? this.artist,
+      album: album ?? this.album,
+      thumbnail: thumbnail ?? this.thumbnail,
+      duration: duration ?? this.duration,
+      localPath: localPath ?? this.localPath,
+      localSourcePath: localSourcePath ?? this.localSourcePath,
+      isRecommended: isRecommended ?? this.isRecommended,
+    );
+  }
 
   factory Song.fromJson(Map<String, dynamic> json) {
     return Song(
@@ -29,6 +57,7 @@ class Song {
       duration: json['duration'],
       localPath: json['localPath'] as String?,
       localSourcePath: json['localSourcePath'] as String?,
+      isRecommended: json['isRecommended'] as bool? ?? false,
     );
   }
 
@@ -42,6 +71,7 @@ class Song {
       'duration': duration,
       'localPath': localPath,
       'localSourcePath': localSourcePath,
+      if (isRecommended) 'isRecommended': true,
     };
   }
 }

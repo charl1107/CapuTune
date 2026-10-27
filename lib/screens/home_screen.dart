@@ -14,6 +14,8 @@ import 'library_screen.dart';
 import 'downloads_screen.dart';
 import 'settings_screen.dart';
 import '../widgets/mini_player.dart';
+import '../services/theme_service.dart';
+import '../widgets/theme_picker_modal.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -32,6 +34,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadRecents();
+    // First launch only: compact theme picker modal over the live Home
+    // screen. Runs after the first frame so Home paints beneath it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final themeService = context.read<ThemeService>();
+      if (themeService.pickerDone) return;
+      showThemePickerModal(context);
+    });
   }
 
   void _loadRecents() {
@@ -114,10 +124,10 @@ class _HomeScreenState extends State<HomeScreen> {
           // Compact title row (§1/§2): plain AppBar, no expanded hero, no
           // gradient, no decorative shapes, no in-app logo image. The
           // launcher icon (Android manifest) is unaffected by this.
-          SliverAppBar(
+          const SliverAppBar(
             pinned: true,
             toolbarHeight: 56,
-            title: const Text(
+            title: Text(
               'CapuTune',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -127,18 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             actions: [
-              // Theme toggle kept compact: default 48dp tap target with a
-              // tighter visual glyph, right-aligned as before.
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                icon: Icon(
-                  playerService.isDarkMode
-                      ? Icons.light_mode
-                      : Icons.dark_mode,
-                ),
-                onPressed: () => playerService.toggleDarkMode(),
-              ),
-              const SizedBox(width: AppColors.spacingS),
+              SizedBox(width: AppColors.spacingS),
             ],
           ),
           // Update banner (non-intrusive, dismissible)
@@ -230,11 +229,14 @@ class _HomeScreenState extends State<HomeScreen> {
             Container(
               padding: const EdgeInsets.all(AppColors.spacingXL),
               decoration: BoxDecoration(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(AppColors.radiusL),
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(
+                  context.watch<ThemeService>().colors.radius,
+                ),
+                border: Border.all(
+                  color: context.watch<ThemeService>().colors.border,
+                  width: context.watch<ThemeService>().colors.borderWidth,
+                ),
               ),
               child: Center(
                 child: Text(
@@ -286,9 +288,10 @@ class _UpdateBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Glass surface with opt-in background blur: this banner floats over
-    // scrolling content, so it is one of the few justified BackdropFilters
-    // (§3). Gradient container replaced with translucent glass + hairline.
+    // Theme-aware surface: this banner floats over scrolling content, so it
+    // is one of the few justified BackdropFilters (§3). Blur is left to the
+    // active preset so neo-brutalism stays flat and cyberpunk keeps its
+    // neon edge instead of a frosted pane.
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppColors.spacingL,
@@ -297,7 +300,6 @@ class _UpdateBanner extends StatelessWidget {
         0,
       ),
       child: GlassContainer(
-        blur: true,
         padding: const EdgeInsets.all(AppColors.spacingM),
         child: Row(
           children: [

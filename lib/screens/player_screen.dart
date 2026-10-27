@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/player_service.dart';
+import '../services/theme_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/add_to_playlist_dialog.dart';
 import 'queue_screen.dart';
@@ -51,13 +52,17 @@ class _PlayerScreenState extends State<PlayerScreen>
       _vinylController.stop();
     }
 
+    // Theme restriction: the active design style changes ONLY this
+    // background gradient. Every foreground element below is untouched.
+    final tokens = context.watch<ThemeService>().colors;
+
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              Theme.of(context).colorScheme.surface,
-              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              tokens.background,
+              tokens.card.withValues(alpha: 0.5),
             ],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,

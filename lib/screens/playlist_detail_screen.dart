@@ -26,7 +26,10 @@ class PlaylistDetailScreen extends StatelessWidget {
             IconButton(
               icon: const Icon(Icons.play_circle_fill),
               onPressed: () {
-                playerService.playList(playlist.songs);
+                playerService.playList(
+                  playlist.songs,
+                  isPlaylistSource: true,
+                );
               },
             ),
         ],
@@ -91,6 +94,7 @@ class PlaylistDetailScreen extends StatelessWidget {
                             playerService.playList(
                               playlist.songs,
                               startIndex: index,
+                              isPlaylistSource: true,
                             );
                           },
                         ),

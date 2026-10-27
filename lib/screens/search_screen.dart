@@ -186,10 +186,14 @@ class _SearchScreenState extends State<SearchScreen> {
                 : showSuggestions
                     ? _buildSuggestions(context, playerService)
                     : _results.isEmpty
-                        ? const Center(
+                        ? Center(
                             child: Text(
                               'No results found.',
-                              style: TextStyle(color: Colors.grey),
+                              style: TextStyle(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
                             ),
                           )
                         : ListView.builder(
@@ -280,12 +284,15 @@ class _SearchScreenState extends State<SearchScreen> {
           })),
         ],
         if (_recentSearches.isEmpty && _suggestedSongs.isEmpty)
-          const Center(
+          Center(
             child: Padding(
-              padding: EdgeInsets.only(top: 64),
+              padding: const EdgeInsets.only(top: 64),
               child: Text(
                 'Search for your favorite music.',
-                style: TextStyle(color: Colors.grey, fontSize: 16),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 16,
+                ),
               ),
             ),
           ),

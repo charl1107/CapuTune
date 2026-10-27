@@ -4,6 +4,7 @@ import '../services/player_service.dart';
 import '../services/update_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/update_dialog.dart';
+import '../widgets/appearance_settings.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -18,12 +19,7 @@ class SettingsScreen extends StatelessWidget {
       body: ListView(
         children: [
           const _SectionHeader('Appearance'),
-          SwitchListTile(
-            title: const Text('Dark Mode'),
-            subtitle: const Text('Use dark theme'),
-            value: playerService.isDarkMode,
-            onChanged: (_) => playerService.toggleDarkMode(),
-          ),
+          const AppearanceSettings(),
           const Divider(),
           const _SectionHeader('Playback'),
           SwitchListTile(
@@ -31,6 +27,14 @@ class SettingsScreen extends StatelessWidget {
             subtitle: const Text('Automatically play next song'),
             value: playerService.autoplay,
             onChanged: (value) => playerService.setAutoplay(value),
+          ),
+          SwitchListTile(
+            title: const Text('Continue with Similar Songs After Playlist'),
+            subtitle: const Text(
+                'Play recommended tracks after a playlist reaches the end'),
+            value: playerService.continueWithSimilarAfterPlaylist,
+            onChanged: (value) =>
+                playerService.setContinueWithSimilarAfterPlaylist(value),
           ),
           ListTile(
             title: const Text('Audio Quality'),

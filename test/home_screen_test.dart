@@ -18,6 +18,8 @@ import 'package:caputune/screens/home_screen.dart';
 import 'package:caputune/services/download_service.dart';
 import 'package:caputune/services/player_service.dart';
 import 'package:caputune/services/storage_service.dart';
+import 'package:caputune/services/theme_service.dart';
+import 'package:caputune/theme/design_style.dart';
 import 'package:caputune/services/update_service.dart';
 import 'package:caputune/theme/app_theme.dart';
 import 'package:caputune/widgets/ambient_background.dart';
@@ -34,6 +36,9 @@ class _FakePlayerService implements PlayerService {
   // typed getters — noSuchMethod returning null breaks them.
   @override
   bool get autoplay => false;
+
+  @override
+  bool get continueWithSimilarAfterPlaylist => false;
 
   @override
   String get audioQuality => 'High';
@@ -80,6 +85,7 @@ Future<void> _pumpHome(
       providers: [
         ChangeNotifierProvider<PlayerService>.value(value: _FakePlayerService()),
         ChangeNotifierProvider<DownloadService>(create: (_) => DownloadService()),
+        ChangeNotifierProvider<ThemeService>(create: (_) => ThemeService()),
         ChangeNotifierProvider<UpdateService>.value(value: _FakeUpdateService()),
       ],
       child: MaterialApp(
@@ -136,28 +142,82 @@ void main() {
     );
   });
 
-  testWidgets('compact title row: CapuTune left, theme toggle right',
+  testWidgets('compact title row: CapuTune left, no dark-mode toggle',
       (tester) async {
     await _initStorage(tester);
     await _pumpHome(tester, size: const Size(390, 844));
 
     expect(find.text('CapuTune'), findsOneWidget);
 
-    final titleRect = tester.getRect(find.text('CapuTune'));
-    final toggleRect = tester.getRect(find.byIcon(Icons.dark_mode));
-    expect(titleRect.left, lessThan(toggleRect.left),
-        reason: 'Title on the left, toggle on the right');
+    // The standalone dark-mode toggle was removed: appearance is managed
+    // in Settings → Appearance now.
+    expect(find.byIcon(Icons.dark_mode), findsNothing);
+    expect(find.byIcon(Icons.light_mode), findsNothing);
 
     // Compact toolbar: 56dp (was expandedHeight 180).
     final bar = tester.widget<SliverAppBar>(find.byType(SliverAppBar));
     expect(bar.toolbarHeight, 56);
   });
 
-  testWidgets('theme toggle switches to light theme and back', (tester) async {
+  testWidgets('first-launch theme picker opens over Home and marks completion',
+      (tester) async {
     await _initStorage(tester);
+    // Boxes persist across tests in one VM run; force a fresh flag.
+    StorageService.setSetting<bool>(false, key: 'theme.pickerDone');
     await _pumpHome(tester, size: const Size(390, 844));
+    await tester.pump();
 
-    expect(find.byIcon(Icons.dark_mode), findsOneWidget);
+    expect(find.text('Choose Your Look'), findsOneWidget);
+    for (final label in [
+      'Glassmorphism',
+      'Ambient UI',
+      'Neo-brutalism',
+      'Premium UI',
+      'Cyberpunk',
+    ]) {
+      expect(find.text(label), findsOneWidget);
+    }
+
+    // Select a preset: Home behind the modal re-themes immediately.
+    await tester.tap(find.text('Premium UI'));
+    await tester.pump();
+    expect(tester.element(find.byType(HomeScreen)).read<ThemeService>().style, DesignStyle.premium);
+
+    // Continue persists completion; modal closes.
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose Your Look'), findsNothing);
+    expect(
+        StorageService.getSetting<bool>(false, key: 'theme.pickerDone'), isTrue);
+  });
+
+  testWidgets('picker Skip restores default and never reappears',
+      (tester) async {
+    await _initStorage(tester);
+    StorageService.setSetting<bool>(false, key: 'theme.pickerDone');
+    await _pumpHome(tester, size: const Size(390, 844));
+    await tester.pump();
+
+    // Preview a different preset first.
+    await tester.tap(find.text('Cyberpunk'));
+    await tester.pump();
+    expect(tester.element(find.byType(HomeScreen)).read<ThemeService>().style, DesignStyle.cyberpunk);
+
+    await tester.tap(find.text('Skip'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose Your Look'), findsNothing);
+    final service = tester.element(find.byType(HomeScreen)).read<ThemeService>();
+    expect(service.style, DesignStyle.glassmorphism);
+    expect(service.pickerDone, isTrue);
+  });
+
+  testWidgets('picker does not reopen on subsequent launches', (tester) async {
+    await _initStorage(tester);
+    StorageService.setSetting<bool>(true, key: 'theme.pickerDone');
+    await _pumpHome(tester, size: const Size(390, 844));
+    await tester.pump();
+
+    expect(find.text('Choose Your Look'), findsNothing);
   });
 
   testWidgets('ambient background is present and cards use glass fills',

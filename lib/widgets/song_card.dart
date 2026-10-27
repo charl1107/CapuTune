@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/download_service.dart';
 import '../services/player_service.dart';
+import '../services/theme_service.dart';
 import '../theme/app_colors.dart';
 import 'add_to_playlist_dialog.dart';
 
@@ -33,9 +34,9 @@ class SongCard extends StatefulWidget {
 
 class _SongCardState extends State<SongCard>
     with SingleTickerProviderStateMixin {
+  bool _isHovered = false;
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
-  bool _isHovered = false;
 
   @override
   void initState() {
@@ -44,7 +45,7 @@ class _SongCardState extends State<SongCard>
       duration: const Duration(milliseconds: 150),
       vsync: this,
     );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.98).animate(
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.96).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
   }
@@ -64,16 +65,94 @@ class _SongCardState extends State<SongCard>
   }
 
   Widget _buildCompactCard(BuildContext context) {
-    // Responsive artwork edge: 104dp on typical phones, stepped down on
-    // narrow screens and up on tablets so the square scales without
-    // stretching or overflow.
+    final themeService = context.watch<ThemeService>();
+    final tokens = themeService.colors;
+
     final media = MediaQuery.of(context);
     final edge = media.size.width < 340
         ? SongCard.compactArtwork - 12
         : media.size.width > 700
             ? SongCard.compactArtwork + 12
             : SongCard.compactArtwork;
-    final artSize = edge - 2 * AppColors.spacingS; // inside the card padding
+    final artSize = edge - 2 * AppColors.spacingS;
+
+    // Distinct decorations per style for compact cards
+    BoxDecoration cardDecoration;
+    if (tokens.useHardShadow) {
+      // Neo-brutalism: solid card with thick border and sharp drop shadow
+      cardDecoration = BoxDecoration(
+        color: tokens.card,
+        borderRadius: BorderRadius.circular(tokens.radius.clamp(2.0, 8.0)),
+        border: Border.all(
+          color: tokens.border,
+          width: tokens.borderWidth.clamp(1.5, 3.0),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: tokens.border,
+            offset: _isHovered ? const Offset(4, 4) : const Offset(3, 3),
+            blurRadius: 0,
+          ),
+        ],
+      );
+    } else if (tokens.useNeonGlow) {
+      // Cyberpunk / Neon: high contrast dark card with neon border & glow
+      cardDecoration = BoxDecoration(
+        color: tokens.card.withValues(alpha: 0.95),
+        borderRadius: BorderRadius.circular(tokens.radius),
+        border: Border.all(
+          color: _isHovered ? tokens.highlight : tokens.border,
+          width: tokens.borderWidth,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: tokens.glow.withValues(alpha: _isHovered ? 0.45 : 0.25),
+            blurRadius: _isHovered ? 10 : 6,
+          ),
+        ],
+      );
+    } else if (tokens.useBlur) {
+      // Glassmorphism: translucent gradient fill + hairline glass border
+      cardDecoration = BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            tokens.card.withValues(alpha: 0.70),
+            tokens.surface.withValues(alpha: 0.82),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(tokens.radius),
+        border: Border.all(
+          color: tokens.border,
+          width: tokens.borderWidth,
+        ),
+        boxShadow: _isHovered ? AppColors.cardShadow : null,
+      );
+    } else {
+      // Ambient UI / Premium UI: Smooth card with subtle elevation / ambient glow
+      cardDecoration = BoxDecoration(
+        color: tokens.card,
+        borderRadius: BorderRadius.circular(tokens.radius),
+        border: Border.all(
+          color: tokens.border,
+          width: tokens.borderWidth,
+        ),
+        boxShadow: [
+          if (_isHovered)
+            BoxShadow(
+              color: Colors.black.withValues(alpha: tokens.isDark ? 0.3 : 0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          if (tokens.glowStrength > 0.8)
+            BoxShadow(
+              color: tokens.glow.withValues(alpha: 0.12 * tokens.glowStrength),
+              blurRadius: 10,
+            ),
+        ],
+      );
+    }
 
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
@@ -97,100 +176,82 @@ class _SongCardState extends State<SongCard>
             duration: const Duration(milliseconds: 200),
             width: edge,
             padding: const EdgeInsets.all(AppColors.spacingS),
-            // Glass recipe: translucent gradient fill + hairline border, no
-            // BackdropFilter (this tile scrolls in a list - blur here would
-            // be expensive and pointless). Artwork stays crisp and
-            // unobstructed.
-            decoration: BoxDecoration(
-              gradient: Theme.of(context).brightness == Brightness.dark
-                  ? AppColors.glassGradientDark
-                  : AppColors.glassGradientLight,
-              borderRadius: BorderRadius.circular(AppColors.radiusM),
-              border: Border.all(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? AppColors.glassBorderDark
-                    : AppColors.glassBorderLight,
-                width: 0.5,
-              ),
-              boxShadow: _isHovered ? AppColors.cardShadow : null,
-            ),
+            decoration: cardDecoration,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(AppColors.radiusS),
-                  child: widget.song.thumbnail != null
-                      ? CachedNetworkImage(
-                          imageUrl: widget.song.thumbnail!,
-                          width: artSize,
-                          height: artSize,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(
-                            width: artSize,
-                            height: artSize,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  Theme.of(context)
-                                      .colorScheme
-                                      .primaryContainer,
-                                  Theme.of(context)
-                                      .colorScheme
-                                      .secondaryContainer,
-                                ],
+                // Artwork is bounded by the card's remaining height rather
+                // than a fixed square: a thicker preset border (neo) or a
+                // wide (tablet/desktop) card would otherwise push the title
+                // and artist out of the card and paint an overflow stripe.
+                // A loose Flexible lets the square shrink only when the
+                // height demands it; on phones the width still wins, so the
+                // common mobile layout is unchanged.
+                Flexible(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(
+                      tokens.useHardShadow
+                          ? 2.0
+                          : (tokens.radius * 0.5).clamp(4.0, 10.0),
+                    ),
+                    child: AspectRatio(
+                      aspectRatio: 1,
+                      child: widget.song.thumbnail != null
+                          ? CachedNetworkImage(
+                              imageUrl: widget.song.thumbnail!,
+                              width: artSize,
+                              height: artSize,
+                              fit: BoxFit.cover,
+                              placeholder: (context, url) => Container(
+                                width: artSize,
+                                height: artSize,
+                                color: tokens.surface,
                               ),
-                            ),
-                          ),
-                          errorWidget: (context, url, error) => Container(
-                            width: artSize,
-                            height: artSize,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  Theme.of(context).colorScheme.primary,
-                                  Theme.of(context).colorScheme.secondary,
-                                ],
+                              errorWidget: (context, url, error) => Container(
+                                width: artSize,
+                                height: artSize,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [tokens.accent, tokens.highlight],
+                                  ),
+                                ),
+                                child: const Icon(Icons.music_note,
+                                    color: Colors.white),
                               ),
+                            )
+                          : Container(
+                              width: artSize,
+                              height: artSize,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [tokens.accent, tokens.highlight],
+                                ),
+                              ),
+                              child: const Icon(Icons.music_note,
+                                  color: Colors.white),
                             ),
-                            child: const Icon(Icons.music_note,
-                                color: Colors.white),
-                          ),
-                        )
-                      : Container(
-                          width: artSize,
-                          height: artSize,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Theme.of(context).colorScheme.primary,
-                                Theme.of(context).colorScheme.secondary,
-                              ],
-                            ),
-                          ),
-                          child: const Icon(Icons.music_note,
-                              color: Colors.white),
-                        ),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: AppColors.spacingXS),
                 Text(
                   widget.song.title,
-                  style: const TextStyle(
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
+                    color: tokens.textPrimary,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
-                // 2px title-artist gap so the text block hugs the artwork.
-                const SizedBox(height: 2),
                 Text(
                   widget.song.artist,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: tokens.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -201,11 +262,67 @@ class _SongCardState extends State<SongCard>
   }
 
   Widget _buildFullCard(BuildContext context) {
+    final themeService = context.watch<ThemeService>();
+    final tokens = themeService.colors;
+
     final downloadService = context.watch<DownloadService>();
     final isDownloading = downloadService.isDownloading(widget.song.id);
     final isDownloaded = downloadService.getState(widget.song.id) == DownloadState.downloaded;
-    // ignore: unused_local_variable
-    final isLocalFile = widget.song.localPath != null;
+    final isRecommended = widget.song.isRecommended;
+
+    BoxDecoration listDecoration;
+    if (tokens.useHardShadow) {
+      listDecoration = BoxDecoration(
+        color: tokens.card,
+        borderRadius: BorderRadius.circular(tokens.radius.clamp(2.0, 8.0)),
+        border: Border.all(
+          color: tokens.border,
+          width: tokens.borderWidth.clamp(1.5, 3.0),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: tokens.border,
+            offset: _isHovered ? const Offset(3, 3) : const Offset(2, 2),
+            blurRadius: 0,
+          ),
+        ],
+      );
+    } else if (tokens.useNeonGlow) {
+      listDecoration = BoxDecoration(
+        color: tokens.card,
+        borderRadius: BorderRadius.circular(tokens.radius),
+        border: Border.all(
+          color: _isHovered ? tokens.highlight : tokens.border.withValues(alpha: 0.6),
+          width: tokens.borderWidth,
+        ),
+        boxShadow: _isHovered
+            ? [
+                BoxShadow(
+                  color: tokens.glow.withValues(alpha: 0.3),
+                  blurRadius: 8,
+                ),
+              ]
+            : null,
+      );
+    } else if (tokens.useBlur) {
+      listDecoration = BoxDecoration(
+        color: tokens.card.withValues(alpha: 0.8),
+        borderRadius: BorderRadius.circular(tokens.radius),
+        border: Border.all(
+          color: tokens.border,
+          width: tokens.borderWidth,
+        ),
+      );
+    } else {
+      listDecoration = BoxDecoration(
+        color: tokens.card,
+        borderRadius: BorderRadius.circular(tokens.radius),
+        border: Border.all(
+          color: tokens.border,
+          width: tokens.borderWidth,
+        ),
+      );
+    }
 
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
@@ -213,80 +330,97 @@ class _SongCardState extends State<SongCard>
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         margin: const EdgeInsets.only(bottom: AppColors.spacingS),
+        decoration: listDecoration,
         child: Material(
-          color: _isHovered
-              ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
-              : Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(AppColors.radiusM),
-          elevation: _isHovered ? 2 : 0,
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(tokens.radius),
           child: ListTile(
-            contentPadding: const EdgeInsets.all(AppColors.spacingS),
-            leading: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(AppColors.radiusS),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: _isHovered ? 0.2 : 0.1),
-                    blurRadius: _isHovered ? 8 : 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: AppColors.spacingM,
+              vertical: 2,
+            ),
+            leading: ClipRRect(
+              borderRadius: BorderRadius.circular(
+                tokens.useHardShadow ? 2.0 : (tokens.radius * 0.4).clamp(4.0, 8.0),
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(AppColors.radiusS),
-                child: widget.song.thumbnail != null
-                    ? CachedNetworkImage(
-                        imageUrl: widget.song.thumbnail!,
-                        width: 56,
-                        height: 56,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => Container(
-                          width: 56,
-                          height: 56,
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        ),
-                        errorWidget: (context, url, error) => Container(
-                          width: 56,
-                          height: 56,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Theme.of(context).colorScheme.primary,
-                                Theme.of(context).colorScheme.secondary,
-                              ],
-                            ),
-                          ),
-                          child: const Icon(Icons.music_note, color: Colors.white),
-                        ),
-                      )
-                    : Container(
-                        width: 56,
-                        height: 56,
+              child: widget.song.thumbnail != null
+                  ? CachedNetworkImage(
+                      imageUrl: widget.song.thumbnail!,
+                      width: 52,
+                      height: 52,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(
+                        width: 52,
+                        height: 52,
+                        color: tokens.surface,
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        width: 52,
+                        height: 52,
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
-                            colors: [
-                              Theme.of(context).colorScheme.primary,
-                              Theme.of(context).colorScheme.secondary,
-                            ],
+                            colors: [tokens.accent, tokens.highlight],
                           ),
                         ),
                         child: const Icon(Icons.music_note, color: Colors.white),
                       ),
-              ),
+                    )
+                  : Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [tokens.accent, tokens.highlight],
+                        ),
+                      ),
+                      child: const Icon(Icons.music_note, color: Colors.white),
+                    ),
             ),
-            title: Text(
-              widget.song.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w500),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.song.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: tokens.textPrimary,
+                    ),
+                  ),
+                ),
+                if (isRecommended) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                    decoration: BoxDecoration(
+                      color: tokens.accent.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: tokens.accent.withValues(alpha: 0.4),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Text(
+                      'SIMILAR',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                        color: tokens.accent,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
             subtitle: Text(
               widget.song.artist,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                color: tokens.textSecondary,
+                fontSize: 12,
               ),
             ),
             trailing: Row(
@@ -299,7 +433,7 @@ class _SongCardState extends State<SongCard>
                       widget.song.duration!,
                       style: TextStyle(
                         fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: tokens.textSecondary,
                       ),
                     ),
                   ),
@@ -313,7 +447,7 @@ class _SongCardState extends State<SongCard>
                   Icon(
                     Icons.download_done,
                     size: 20,
-                    color: Theme.of(context).colorScheme.primary,
+                    color: tokens.accent,
                   ),
                 const SizedBox(width: AppColors.spacingXS),
                 _FavoriteButton(song: widget.song),
@@ -343,81 +477,45 @@ class _SongCardState extends State<SongCard>
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.queue_music),
-              title: const Text('Add to queue'),
-              onTap: () {
-                final added = context.read<PlayerService>().addToQueue(widget.song);
-                Navigator.pop(sheetContext);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(added
-                          ? 'Added "${widget.song.title}" to the queue.'
-                          : 'That song is already in the queue.'),
-                    ),
-                  );
-                }
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.playlist_add),
               title: const Text('Add to playlist'),
               onTap: () => Navigator.pop(sheetContext, 'add_to_playlist'),
             ),
-            ListTile(
-              leading: Icon(
-                context.read<PlayerService>().isFavorite(widget.song.id)
-                    ? Icons.favorite
-                    : Icons.favorite_border,
-              ),
-              title: const Text('Add to favorites'),
-              onTap: () {
-                context.read<PlayerService>().toggleFavorite(widget.song);
-                Navigator.pop(sheetContext);
-              },
-            ),
-            if (isDownloaded || isLocalFile)
+            if (!isLocalFile)
               ListTile(
-                leading: const Icon(Icons.file_download_outlined),
-                title: Text(isLocalFile ? 'Copy to Downloads' : 'Save to device (MP3)'),
-                subtitle: Text(isLocalFile
-                    ? 'Copy original audio file to Downloads folder'
-                    : 'Export unencrypted MP3 to Downloads folder'),
-                onTap: () async {
-                  Navigator.pop(sheetContext);
-                  final path = await downloadService.saveToDevice(widget.song);
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(path != null
-                            ? 'Saved to Downloads folder'
-                            : 'Failed to save to device'),
-                        duration: const Duration(seconds: 3),
-                      ),
-                    );
-                  }
-                },
+                leading: Icon(
+                  isDownloaded ? Icons.delete_outline : Icons.download,
+                  color: isDownloaded ? Colors.red : null,
+                ),
+                title: Text(isDownloaded ? 'Delete download' : 'Download'),
+                onTap: () => Navigator.pop(
+                  sheetContext,
+                  isDownloaded ? 'delete_download' : 'download',
+                ),
               ),
-            ListTile(
-              leading: const Icon(Icons.share),
-              title: const Text('Share'),
-              onTap: () => Navigator.pop(sheetContext),
-            ),
           ],
         ),
       ),
     );
 
-    if (action == 'add_to_playlist' && mounted) {
-      await showAddToPlaylistDialog(this.context, widget.song);
+    if (!context.mounted || action == null) return;
+
+    switch (action) {
+      case 'add_to_playlist':
+        showAddToPlaylistDialog(context, widget.song);
+        break;
+      case 'download':
+        downloadService.downloadSong(widget.song);
+        break;
+      case 'delete_download':
+        downloadService.removeDownload(widget.song.id);
+        break;
     }
   }
-
 }
 
 class _FavoriteButton extends StatefulWidget {
   final Song song;
-
   const _FavoriteButton({required this.song});
 
   @override
@@ -433,11 +531,11 @@ class _FavoriteButtonState extends State<_FavoriteButton>
   void initState() {
     super.initState();
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 200),
       vsync: this,
     );
     _scaleAnimation = Tween<double>(begin: 1.0, end: 1.3).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.elasticOut),
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
     );
   }
 
@@ -449,7 +547,9 @@ class _FavoriteButtonState extends State<_FavoriteButton>
 
   @override
   Widget build(BuildContext context) {
-    final isFavorite = context.read<PlayerService>().isFavorite(widget.song.id);
+    final playerService = context.watch<PlayerService>();
+    final tokens = context.watch<ThemeService>().colors;
+    final isFavorite = playerService.isFavorite(widget.song.id);
 
     return GestureDetector(
       onTap: () {
@@ -468,7 +568,7 @@ class _FavoriteButtonState extends State<_FavoriteButton>
         },
         child: Icon(
           isFavorite ? Icons.favorite : Icons.favorite_border,
-          color: isFavorite ? AppColors.accentPink : null,
+          color: isFavorite ? tokens.highlight : null,
           size: 20,
         ),
       ),
