@@ -62,6 +62,7 @@ class PlayerService extends ChangeNotifier {
   int _currentIndex = -1;
   bool _isDarkMode = false;
   bool _autoplay = true;
+  bool _radioAutoplay = true;
   bool _continueWithSimilarAfterPlaylist = false;
   bool _isPlaylistSource = false;
   List<Song> _originalQueue = [];
@@ -74,6 +75,7 @@ class PlayerService extends ChangeNotifier {
   /// and are therefore preserved ahead of any recommendation lookup.
   List<Song> _manualQueue = [];
   bool _isLoadingRecommendations = false;
+  Future<void>? _radioQueueFuture;
   String _audioQuality = '320kbps';
   bool _isPlaying = false;
   bool _shuffleMode = false;
@@ -88,6 +90,7 @@ class PlayerService extends ChangeNotifier {
   int get currentIndex => _currentIndex;
   bool get isDarkMode => _isDarkMode;
   bool get autoplay => _autoplay;
+  bool get radioAutoplay => _radioAutoplay;
   bool get continueWithSimilarAfterPlaylist => _continueWithSimilarAfterPlaylist;
   bool get isPlaylistSource => _isPlaylistSource;
   String get audioQuality => _audioQuality;
@@ -137,9 +140,13 @@ class PlayerService extends ChangeNotifier {
     StreamResolver? resolver,
     Player? player,
     SimilarSongsResolver? similarSongsResolver,
+    bool? initialRadioAutoplay,
   })  : _resolver = resolver ?? StreamResolver(),
         _injectedPlayer = player,
         _similarSongsResolver = similarSongsResolver {
+    if (initialRadioAutoplay != null) {
+      _radioAutoplay = initialRadioAutoplay;
+    }
     _loadSettings();
     if (_engineUsable) {
       _initMpvListeners();
@@ -190,6 +197,7 @@ class PlayerService extends ChangeNotifier {
   Future<void> _loadSettings() async {
     _isDarkMode = StorageService.getDarkMode();
     _autoplay = StorageService.getAutoplay();
+    _radioAutoplay = StorageService.getRadioAutoplay();
     _continueWithSimilarAfterPlaylist =
         StorageService.getContinueWithSimilarAfterPlaylist();
     _audioQuality = StorageService.getAudioQuality();
@@ -207,6 +215,9 @@ class PlayerService extends ChangeNotifier {
       _manualQueue = [];
       _currentIndex = 0;
       _isPlaylistSource = false;
+      if (_autoplay && _radioAutoplay) {
+        _radioQueueFuture = prepareRadioQueue(seed: song);
+      }
     } else {
       _currentIndex = index;
     }
@@ -299,10 +310,58 @@ class PlayerService extends ChangeNotifier {
 
   bool addToQueue(Song song) {
     if (_queue.any((queuedSong) => queuedSong.id == song.id)) return false;
-    _queue.add(song);
     _manualQueue.add(song);
+
+    // Place manual queue additions ahead of unplayed recommendations
+    final firstRecIndex = _queue.indexWhere(
+      (s) => s.isRecommended && _queue.indexOf(s) > _currentIndex,
+    );
+    if (firstRecIndex != -1) {
+      _queue.insert(firstRecIndex, song);
+    } else {
+      _queue.add(song);
+    }
     notifyListeners();
     return true;
+  }
+
+  /// Prepares a diverse radio queue based on [seed] without interrupting playback.
+  Future<void> prepareRadioQueue({Song? seed}) async {
+    final seedSong = seed ?? currentSong;
+    if (seedSong == null ||
+        !_autoplay ||
+        !_radioAutoplay ||
+        _isLoadingRecommendations) {
+      return;
+    }
+    _isLoadingRecommendations = true;
+    try {
+      final excluded = <String>{
+        ..._queue.map((s) => s.id),
+        ..._manualQueue.map((s) => s.id),
+      };
+      final recs = await _findSimilarSongs(
+        seed: seedSong,
+        excludedIds: excluded,
+        limit: 10,
+      );
+      if (!_radioAutoplay || currentSong?.id != seedSong.id || _isPlaylistSource) {
+        return;
+      }
+      if (recs.isNotEmpty) {
+        final toAdd = List<Song>.from(recs);
+        if (_shuffleMode) {
+          toAdd.shuffle();
+        }
+        _recommendedQueue.addAll(toAdd);
+        _queue.addAll(toAdd);
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('[radio] prepare error: $e');
+    } finally {
+      _isLoadingRecommendations = false;
+    }
   }
 
   void reorderQueue(int oldIndex, int newIndex) {
@@ -357,6 +416,13 @@ class PlayerService extends ChangeNotifier {
       return;
     }
 
+    if (_radioQueueFuture != null) {
+      try {
+        await _radioQueueFuture;
+      } catch (_) {}
+      _radioQueueFuture = null;
+    }
+
     final nextIndex = _currentIndex + 1;
     if (nextIndex >= _queue.length) {
       if (_repeatMode == RepeatMode.all) {
@@ -369,17 +435,17 @@ class PlayerService extends ChangeNotifier {
 
       // End of the queue.
       //
-      // Individual song: continue with similar songs when available.
+      // Individual song: continue with similar songs when radio autoplay is enabled.
       // Playlist: only when the user opted in via
-      // "Continue with Similar Songs After Playlist".
+      // "Continue with Similar Songs After Playlist" and shuffle is off.
       final canAutoplaySimilar = _autoplay &&
-          _shuffleMode == false &&
-          (!_isPlaylistSource || _continueWithSimilarAfterPlaylist);
+          _radioAutoplay &&
+          (!_isPlaylistSource || (_continueWithSimilarAfterPlaylist && !_shuffleMode));
 
       if (canAutoplaySimilar && !_isLoadingRecommendations && currentSong != null) {
         _isLoadingRecommendations = true;
         try {
-          final seed = currentSong!;
+          final seed = _originalQueue.isNotEmpty ? _originalQueue.first : currentSong!;
           final excluded = <String>{
             ..._queue.map((s) => s.id),
             ..._manualQueue.map((s) => s.id),
@@ -389,11 +455,15 @@ class PlayerService extends ChangeNotifier {
             excludedIds: excluded,
             limit: 5,
           );
-          if (recommendations.isNotEmpty) {
+          if (recommendations.isNotEmpty && _radioAutoplay) {
             // Recommendations are appended as a clearly separated tail; the
             // original playlist/queue order is left untouched.
-            _recommendedQueue.addAll(recommendations);
-            _queue.addAll(recommendations);
+            final toAdd = List<Song>.from(recommendations);
+            if (_shuffleMode) {
+              toAdd.shuffle();
+            }
+            _recommendedQueue.addAll(toAdd);
+            _queue.addAll(toAdd);
             _currentIndex = nextIndex;
             notifyListeners();
             await play(_queue[_currentIndex]);
@@ -488,6 +558,44 @@ class PlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setRadioAutoplay(bool value) {
+    _radioAutoplay = value;
+    StorageService.setRadioAutoplay(value);
+
+    if (!_radioAutoplay) {
+      // Disabling radio autoplay must not stop, restart, or interrupt the currently playing song.
+      // Do not remove manually queued songs when the setting changes.
+      // If radio autoplay is disabled, finish the existing applicable queue normally and stop when there are no more tracks.
+      if (_currentIndex >= 0 && _currentIndex < _queue.length) {
+        final current = _queue[_currentIndex];
+        final history = _queue.sublist(0, _currentIndex);
+        final upcoming = _queue.sublist(_currentIndex + 1);
+        final filteredUpcoming =
+            upcoming.where((s) => !s.isRecommended).toList();
+        _queue = [
+          ...history,
+          current,
+          ...filteredUpcoming,
+        ];
+        _recommendedQueue.clear();
+      } else {
+        _queue.removeWhere((s) => s.isRecommended);
+        _recommendedQueue.clear();
+      }
+    } else {
+      // Enabling radio autoplay for a standalone song:
+      // If playing a standalone song and no upcoming recommendations exist, prepare the queue.
+      if (!_isPlaylistSource &&
+          currentSong != null &&
+          _recommendedQueue.isEmpty) {
+        _radioQueueFuture = prepareRadioQueue(
+          seed: _originalQueue.isNotEmpty ? _originalQueue.first : currentSong!,
+        );
+      }
+    }
+    notifyListeners();
+  }
+
   void setContinueWithSimilarAfterPlaylist(bool value) {
     _continueWithSimilarAfterPlaylist = value;
     StorageService.setContinueWithSimilarAfterPlaylist(value);
@@ -502,62 +610,102 @@ class PlayerService extends ChangeNotifier {
 
   void toggleShuffle() {
     _shuffleMode = !_shuffleMode;
-    if (_queue.isEmpty) {
+    if (_queue.isEmpty || _currentIndex < 0 || _currentIndex >= _queue.length) {
       notifyListeners();
       return;
     }
 
-    final current = currentSong;
+    final current = _queue[_currentIndex];
+    final history = _queue.sublist(0, _currentIndex);
+
     if (_shuffleMode) {
-      // Shuffle ON.
-      //
-      // For a playlist source only the *playlist's own* tracks are shuffled;
-      // recommendations and manual additions are held out so the playlist
-      // stays the source of truth. The currently playing track anchors the
-      // head so playback is never interrupted.
-      final base = _isPlaylistSource && _originalQueue.isNotEmpty
-          ? _originalQueue
-          : _queue.where((s) => !s.isRecommended).toList();
+      // Shuffle ON:
+      // Keep current song at _currentIndex, preserve already-played history before it.
+      // Randomize only the remaining eligible upcoming tracks.
+      if (_originalQueue.length > 1) {
+        final playedIds = {
+          ...history.map((s) => s.id),
+          current.id,
+        };
+        final remainingOriginal = _originalQueue
+            .where((s) => !playedIds.contains(s.id))
+            .toList();
+        remainingOriginal.shuffle();
 
-      final rest = List<Song>.from(base);
-      if (current != null) {
-        rest.removeWhere((s) => s.id == current.id);
-      }
-      rest.shuffle();
+        final upcomingManual = _manualQueue
+            .where((s) => !playedIds.contains(s.id))
+            .toList();
+        final upcomingRecommended = _recommendedQueue
+            .where((s) => !playedIds.contains(s.id))
+            .toList();
 
-      final tail = _isPlaylistSource
-          ? _manualQueue
-          : _queue.where((s) => s.isRecommended).toList();
-
-      _queue = [
-        if (current != null) current,
-        ...rest,
-        ...tail.where((s) => current == null || s.id != current.id),
-      ];
-      _currentIndex = current != null ? 0 : -1;
-    } else {
-      // Shuffle OFF: restore the source order.
-      if (_isPlaylistSource && _originalQueue.isNotEmpty) {
-        final restored = List<Song>.from(_originalQueue);
-        final extras = [
-          ..._manualQueue,
-          ..._recommendedQueue,
-        ].where((s) => !restored.any((o) => o.id == s.id)).toList();
-        _queue = [...restored, ...extras];
-        if (current != null) {
-          final idx = _queue.indexWhere((s) => s.id == current.id);
-          _currentIndex = idx == -1 ? 0 : idx;
-        }
+        _queue = [
+          ...history,
+          current,
+          ...remainingOriginal,
+          ...upcomingManual,
+          ...upcomingRecommended,
+        ];
       } else {
-        final restored = _queue.where((s) => !s.isRecommended).toList();
-        final extras = _queue.where((s) => s.isRecommended).toList();
-        _queue = [...restored, ...extras];
-        if (current != null) {
-          final idx = _queue.indexWhere((s) => s.id == current.id);
-          _currentIndex = idx == -1 ? 0 : idx;
+        // Standalone song: reorder only upcoming tracks without inventing anything
+        final upcoming = _queue.sublist(_currentIndex + 1);
+        if (upcoming.isNotEmpty) {
+          final shuffled = List<Song>.from(upcoming)..shuffle();
+          _queue = [
+            ...history,
+            current,
+            ...shuffled,
+          ];
         }
+      }
+    } else {
+      // Shuffle OFF: restore original order of unplayed tracks
+      if (_originalQueue.length > 1) {
+        final playedIds = {
+          ...history.map((s) => s.id),
+          current.id,
+        };
+        final remainingOriginal = _originalQueue
+            .where((s) => !playedIds.contains(s.id))
+            .toList();
+
+        final upcomingManual = _manualQueue
+            .where((s) => !playedIds.contains(s.id))
+            .toList();
+        final upcomingRecommended = _recommendedQueue
+            .where((s) => !playedIds.contains(s.id))
+            .toList();
+
+        _queue = [
+          ...history,
+          current,
+          ...remainingOriginal,
+          ...upcomingManual,
+          ...upcomingRecommended,
+        ];
+      } else {
+        // Standalone song: restore manual and recommended in original order
+        final playedIds = {
+          ...history.map((s) => s.id),
+          current.id,
+        };
+        final upcomingManual = _manualQueue
+            .where((s) => !playedIds.contains(s.id))
+            .toList();
+        final upcomingRecommended = _recommendedQueue
+            .where((s) => !playedIds.contains(s.id))
+            .toList();
+
+        _queue = [
+          ...history,
+          current,
+          ...upcomingManual,
+          ...upcomingRecommended,
+        ];
       }
     }
+
+    _currentIndex = history.length;
     notifyListeners();
   }
 

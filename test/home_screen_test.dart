@@ -38,6 +38,9 @@ class _FakePlayerService implements PlayerService {
   bool get autoplay => false;
 
   @override
+  bool get radioAutoplay => false;
+
+  @override
   bool get continueWithSimilarAfterPlaylist => false;
 
   @override

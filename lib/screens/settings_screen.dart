@@ -29,6 +29,12 @@ class SettingsScreen extends StatelessWidget {
             onChanged: (value) => playerService.setAutoplay(value),
           ),
           SwitchListTile(
+            title: const Text('Radio Autoplay'),
+            subtitle: const Text('Play similar songs when queue ends'),
+            value: playerService.radioAutoplay,
+            onChanged: (value) => playerService.setRadioAutoplay(value),
+          ),
+          SwitchListTile(
             title: const Text('Continue with Similar Songs After Playlist'),
             subtitle: const Text(
                 'Play recommended tracks after a playlist reaches the end'),

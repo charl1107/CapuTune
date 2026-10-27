@@ -33,6 +33,11 @@ class StorageService {
   static bool getAutoplay() => _settingsBox.get('autoplay', defaultValue: true);
   static void setAutoplay(bool value) => _settingsBox.put('autoplay', value);
 
+  static bool getRadioAutoplay() =>
+      _settingsBox.get('radioAutoplay', defaultValue: true);
+  static void setRadioAutoplay(bool value) =>
+      _settingsBox.put('radioAutoplay', value);
+
   static bool getContinueWithSimilarAfterPlaylist() =>
       _settingsBox.get('continueWithSimilarAfterPlaylist', defaultValue: false);
   static void setContinueWithSimilarAfterPlaylist(bool value) =>

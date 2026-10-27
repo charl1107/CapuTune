@@ -377,6 +377,25 @@ class _PlayerScreenState extends State<PlayerScreen>
               title: const Text('Add to playlist'),
               onTap: () => Navigator.pop(sheetContext, 'add_to_playlist'),
             ),
+            SwitchListTile(
+              secondary: Icon(
+                Icons.sensors,
+                color: playerService.radioAutoplay
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+              title: const Text('Radio Autoplay'),
+              subtitle: Text(
+                playerService.radioAutoplay
+                    ? 'Similar songs play automatically'
+                    : 'Off',
+              ),
+              value: playerService.radioAutoplay,
+              onChanged: (val) {
+                playerService.setRadioAutoplay(val);
+                Navigator.pop(sheetContext);
+              },
+            ),
             ListTile(
               leading: Icon(
                 playerService.isFavorite(song.id)

@@ -203,10 +203,7 @@ class _SearchScreenState extends State<SearchScreen> {
                               return SongCard(
                                 song: _results[index],
                                 onTap: () {
-                                  playerService.playList(
-                                    _results,
-                                    startIndex: index,
-                                  );
+                                  playerService.play(_results[index]);
                                 },
                               );
                             },
@@ -275,10 +272,7 @@ class _SearchScreenState extends State<SearchScreen> {
             return SongCard(
               song: entry.value,
               onTap: () {
-                playerService.playList(
-                  _suggestedSongs,
-                  startIndex: entry.key,
-                );
+                playerService.play(entry.value);
               },
             );
           })),

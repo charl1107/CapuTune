@@ -36,6 +36,9 @@ class _FakePlayerService implements PlayerService {
   bool get isDarkMode => false;
 
   @override
+  bool get radioAutoplay => true;
+
+  @override
   bool isFavorite(String id) => false;
 
   @override

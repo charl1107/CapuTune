@@ -22,6 +22,9 @@ class _FakePlayerService extends ChangeNotifier implements PlayerService {
   bool get autoplay => false;
 
   @override
+  bool get radioAutoplay => false;
+
+  @override
   bool get continueWithSimilarAfterPlaylist => false;
 
   @override

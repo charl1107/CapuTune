@@ -397,4 +397,203 @@ void main() {
       expect(player.currentIndex, -1);
     });
   });
+
+  group('Radio Autoplay Toggle & Non-Disruptive Shuffle Invariants', () {
+    test('1. Toggling Shuffle during standalone playback does not interrupt the song', () async {
+      final player = _player();
+      final song = _song('s1');
+
+      await player.play(song);
+      expect(player.currentSong?.id, 's1');
+      expect(player.currentIndex, 0);
+
+      // Toggle Shuffle ON
+      player.toggleShuffle();
+      expect(player.shuffleMode, isTrue);
+      expect(player.currentSong?.id, 's1');
+      expect(player.currentIndex, 0);
+      expect(player.queue.map((s) => s.id), ['s1']);
+
+      // Toggle Shuffle OFF
+      player.toggleShuffle();
+      expect(player.shuffleMode, isFalse);
+      expect(player.currentSong?.id, 's1');
+      expect(player.currentIndex, 0);
+      expect(player.queue.map((s) => s.id), ['s1']);
+    });
+
+    test('2. Toggling Shuffle in a playlist does not interrupt the song', () async {
+      final player = _player();
+      final songs = [_song('p1'), _song('p2'), _song('p3'), _song('p4')];
+
+      await player.playList(songs, isPlaylistSource: true);
+      await player.playNext(); // Now on p2
+      expect(player.currentSong?.id, 'p2');
+      expect(player.currentIndex, 1);
+
+      // Toggle Shuffle ON
+      player.toggleShuffle();
+      expect(player.shuffleMode, isTrue);
+      // Current song remains p2 at currentIndex 1
+      expect(player.currentSong?.id, 'p2');
+      expect(player.currentIndex, 1);
+      // Already-played history (p1) is preserved before current song
+      expect(player.queue[0].id, 'p1');
+    });
+
+    test('3. The next playlist track follows the new shuffled order', () async {
+      final player = _player();
+      final songs = [_song('p1'), _song('p2'), _song('p3'), _song('p4')];
+
+      await player.playList(songs, isPlaylistSource: true);
+      await player.playNext(); // Now on p2
+      expect(player.currentSong?.id, 'p2');
+
+      player.toggleShuffle();
+      expect(player.shuffleMode, isTrue);
+
+      // Remaining unplayed tracks are p3 and p4 in shuffled positions
+      final nextTrackId = player.queue[2].id;
+      expect({'p3', 'p4'}, contains(nextTrackId));
+
+      await player.playNext();
+      expect(player.currentSong?.id, nextTrackId);
+    });
+
+    test('4. Shuffle does not inject external recommendations into a playlist', () async {
+      var resolverCalled = false;
+      final player = _player(resolver: ({
+        required seed,
+        required excludedIds,
+        required limit,
+      }) async {
+        resolverCalled = true;
+        return [_song('rec1')];
+      });
+
+      final songs = [_song('p1'), _song('p2')];
+      await player.playList(songs, isPlaylistSource: true);
+      player.toggleShuffle();
+
+      await player.playNext(); // plays p2 or p1
+      await player.playNext(); // reaches end
+
+      expect(resolverCalled, isFalse);
+      expect(player.currentIndex, -1);
+      expect(player.queue.map((s) => s.id).toSet(), equals({'p1', 'p2'}));
+    });
+
+    test('5. Radio Autoplay can be enabled and disabled independently', () {
+      final player = _player();
+      expect(player.radioAutoplay, isTrue);
+      expect(player.shuffleMode, isFalse);
+
+      // Toggling shuffle does not affect radio autoplay
+      player.toggleShuffle();
+      expect(player.shuffleMode, isTrue);
+      expect(player.radioAutoplay, isTrue);
+
+      // Toggling radio autoplay does not affect shuffle
+      player.setRadioAutoplay(false);
+      expect(player.radioAutoplay, isFalse);
+      expect(player.shuffleMode, isTrue);
+
+      // Disable shuffle
+      player.toggleShuffle();
+      expect(player.shuffleMode, isFalse);
+      expect(player.radioAutoplay, isFalse);
+
+      // Enable radio autoplay
+      player.setRadioAutoplay(true);
+      expect(player.radioAutoplay, isTrue);
+      expect(player.shuffleMode, isFalse);
+    });
+
+    test('6. Disabling Radio Autoplay does not interrupt playback or erase the manual queue', () async {
+      final player = _player();
+      final s1 = _song('s1');
+      await player.play(s1);
+
+      // Add a manual queue item
+      final m1 = _song('m1');
+      player.addToQueue(m1);
+
+      // Inject recommendations
+      player.prepareRadioQueue();
+      // Suppose recommendations are in queue
+      final rec = _song('r1').copyWith(isRecommended: true);
+      player.addToQueue(rec);
+
+      expect(player.queue.any((s) => s.id == 'm1'), isTrue);
+      expect(player.queue.any((s) => s.id == 'r1'), isTrue);
+      expect(player.currentSong?.id, 's1');
+
+      // Disable Radio Autoplay
+      player.setRadioAutoplay(false);
+
+      // Current song is uninterrupted
+      expect(player.currentSong?.id, 's1');
+      expect(player.currentIndex, 0);
+
+      // Manual queue item is preserved!
+      expect(player.queue.any((s) => s.id == 'm1'), isTrue);
+
+      // Recommended items are cleared!
+      expect(player.queue.any((s) => s.id == 'r1'), isFalse);
+
+      // Play next advances to manual queue item m1
+      await player.playNext();
+      expect(player.currentSong?.id, 'm1');
+
+      // Next at end stops without fetching recommendations
+      await player.playNext();
+      expect(player.currentIndex, -1);
+    });
+
+    test('7. No queue means Shuffle cannot invent tracks', () async {
+      final player = _player();
+      player.setRadioAutoplay(false);
+      await player.play(_song('single'));
+
+      expect(player.queue, hasLength(1));
+      expect(player.currentSong?.id, 'single');
+
+      // Enable shuffle with no upcoming queue
+      player.toggleShuffle();
+      expect(player.shuffleMode, isTrue);
+      expect(player.queue, hasLength(1));
+      expect(player.currentSong?.id, 'single');
+    });
+
+    test('8. Repeat modes and manual queue operations still work', () async {
+      final player = _player();
+      await player.playList([_song('a'), _song('b')], isPlaylistSource: true);
+
+      // Manual queue
+      player.addToQueue(_song('c'));
+      expect(player.queue.map((s) => s.id), ['a', 'b', 'c']);
+
+      // Repeat One
+      player.cycleRepeat(); // all
+      player.cycleRepeat(); // one
+      expect(player.repeatMode, RepeatMode.one);
+
+      await player.playNext();
+      expect(player.currentSong?.id, 'a'); // Repeat One seeks zero without advance
+
+      // Repeat All
+      player.cycleRepeat(); // off
+      player.cycleRepeat(); // all
+      expect(player.repeatMode, RepeatMode.all);
+
+      await player.playNext(); // b
+      expect(player.currentSong?.id, 'b');
+
+      await player.playNext(); // c
+      expect(player.currentSong?.id, 'c');
+
+      await player.playNext(); // wraps to a
+      expect(player.currentSong?.id, 'a');
+    });
+  });
 }
