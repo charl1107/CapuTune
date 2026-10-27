@@ -5,12 +5,18 @@ import 'player_service.dart';
 /// Bridges [PlayerService] playback state with Android's system MediaSession
 /// and notification shade using [audio_service].
 ///
-/// Keeps Android recognizing CapuTune as an active music player with:
-/// - CapuTune as media app
-/// - Current song title, artist, artwork
-/// - Play/Pause, Previous, Next
-/// - Seekbar / duration position synchronization
-/// - Proper background foreground service lifecycle
+/// Notification buttons:
+/// - Previous / Play-Pause / Next are ALWAYS advertised.
+///   On Android 13+ System UI renders the media card's buttons from the
+///   PlaybackState action bits, and audio_service only sets
+///   ACTION_SKIP_TO_PREVIOUS / ACTION_SKIP_TO_NEXT when these controls are
+///   present. Substituting rewind/fastForward at queue edges (which have no
+///   meaning here) made the buttons disappear entirely on some devices.
+///   PlayerService.playPrevious()/playNext() already no-op safely at the
+///   queue boundaries, and playNext() still honors repeat / radio autoplay /
+///   recommendations, so the buttons always drive the real player.
+/// - Play/Pause is state-checked: the notification's Play never pauses and
+///   Pause never resumes, even if the session state briefly diverges.
 class CapuTuneAudioHandler extends BaseAudioHandler with SeekHandler {
   final PlayerService _playerService;
   StreamSubscription? _posSub;
@@ -52,15 +58,12 @@ class CapuTuneAudioHandler extends BaseAudioHandler with SeekHandler {
     }
 
     final isPlaying = _playerService.isPlaying;
-    final hasNext = _playerService.currentIndex + 1 < _playerService.queue.length ||
-        _playerService.radioAutoplay ||
-        _playerService.repeatMode != RepeatMode.off;
-    final hasPrev = _playerService.currentIndex > 0;
 
+    // Previous / Play-Pause / Next, always advertised (see class doc).
     final controls = [
-      if (hasPrev) MediaControl.skipToPrevious else MediaControl.rewind,
+      MediaControl.skipToPrevious,
       if (isPlaying) MediaControl.pause else MediaControl.play,
-      if (hasNext) MediaControl.skipToNext else MediaControl.fastForward,
+      MediaControl.skipToNext,
     ];
 
     playbackState.add(playbackState.value.copyWith(
@@ -100,10 +103,15 @@ class CapuTuneAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   @override
-  Future<void> play() => _playerService.togglePlay();
+  Future<void> play() async {
+    // State-checked so a stale session can never turn "Play" into a pause.
+    if (!_playerService.isPlaying) await _playerService.togglePlay();
+  }
 
   @override
-  Future<void> pause() => _playerService.togglePlay();
+  Future<void> pause() async {
+    if (_playerService.isPlaying) await _playerService.togglePlay();
+  }
 
   @override
   Future<void> stop() => _playerService.stop();

@@ -109,4 +109,70 @@ void main() {
     await handler.setRepeatMode(AudioServiceRepeatMode.all);
     expect(player.repeatMode, RepeatMode.all);
   });
+
+  test('Previous and Next are always advertised, even at queue boundaries',
+      () async {
+    final player = PlayerService(
+      resolver: _FakeStreamResolver(),
+      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+    );
+
+    final handler = CapuTuneAudioHandler(player);
+    addTearDown(handler.dispose);
+
+    final s1 = _song('s1');
+    final s2 = _song('s2');
+    await player.playList([s1, s2], isPlaylistSource: true);
+
+    List<MediaAction> controlActions() =>
+        handler.playbackState.value.controls.map((c) => c.action).toList();
+
+    // Single-track queue: Previous/Next must still be advertised so Android
+    // 13+ renders the buttons (PlayerService no-ops safely at the edges).
+    await player.play(_song('only'));
+    expect(controlActions(), contains(MediaAction.skipToNext));
+    expect(controlActions(), contains(MediaAction.skipToPrevious));
+
+    // First track of a multi-track queue.
+    await player.playList([s1, s2], isPlaylistSource: true);
+    expect(controlActions(), contains(MediaAction.skipToPrevious));
+    expect(controlActions(), contains(MediaAction.skipToNext));
+
+    // Last track, past the queue end boundary.
+    await player.playNext();
+    expect(player.currentSong?.id, 's2');
+    expect(controlActions(), contains(MediaAction.skipToPrevious));
+    expect(controlActions(), contains(MediaAction.skipToNext));
+
+    // Skipping Next at the end must not crash and must not lose the session.
+    await player.playNext();
+    expect(controlActions(), contains(MediaAction.skipToNext));
+  });
+
+  test('Play and Pause from the session reflect real playback state', () async {
+    final player = PlayerService(
+      resolver: _FakeStreamResolver(),
+      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+    );
+
+    final handler = CapuTuneAudioHandler(player);
+    addTearDown(handler.dispose);
+
+    await player.play(_song('s1'));
+
+    // Pause control shown while playing; Play shown while paused.
+    List<MediaAction> controlActions() =>
+        handler.playbackState.value.controls.map((c) => c.action).toList();
+    final pauseShown = controlActions().contains(MediaAction.pause);
+    final playShown = controlActions().contains(MediaAction.play);
+    expect(pauseShown != playShown, isTrue,
+        reason: 'exactly one of Play/Pause must be advertised');
+
+    // The state-checked play/pause handlers never invert the intent, and the
+    // session state mirrors the real player at all times.
+    await handler.pause();
+    await handler.play();
+    await handler.play(); // already playing -> no-op
+    expect(handler.playbackState.value.playing, player.isPlaying);
+  });
 }

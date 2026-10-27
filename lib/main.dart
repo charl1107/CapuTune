@@ -49,7 +49,9 @@ void main() async {
           androidNotificationChannelName: 'CapuTune Music Playback',
           androidNotificationChannelDescription:
               'Active playback notification for CapuTune music player',
-          androidNotificationIcon: 'mipmap/ic_launcher',
+          // Notifications need a flat monochrome drawable; the adaptive
+          // launcher icon (mipmap/ic_launcher) renders as a white square here.
+          androidNotificationIcon: 'drawable/ic_notification',
           androidShowNotificationBadge: true,
           androidStopForegroundOnPause: false,
           notificationColor: Color(0xFF1E1E2E),
