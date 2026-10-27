@@ -268,7 +268,6 @@ class _SongCardState extends State<SongCard>
     final downloadService = context.watch<DownloadService>();
     final isDownloading = downloadService.isDownloading(widget.song.id);
     final isDownloaded = downloadService.getState(widget.song.id) == DownloadState.downloaded;
-    final isRecommended = widget.song.isRecommended;
 
     BoxDecoration listDecoration;
     if (tokens.useHardShadow) {
@@ -389,29 +388,6 @@ class _SongCardState extends State<SongCard>
                     ),
                   ),
                 ),
-                if (isRecommended) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                    decoration: BoxDecoration(
-                      color: tokens.accent.withValues(alpha: 0.16),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: tokens.accent.withValues(alpha: 0.4),
-                        width: 0.8,
-                      ),
-                    ),
-                    child: Text(
-                      'SIMILAR',
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.4,
-                        color: tokens.accent,
-                      ),
-                    ),
-                  ),
-                ],
               ],
             ),
             subtitle: Text(
