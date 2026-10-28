@@ -1,13 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/song.dart';
 import 'stream_resolver.dart';
 import 'storage_service.dart';
-import 'cipher_service.dart';
+import 'local_decrypt_server.dart';
 import 'recommendation_service.dart';
 import '../utils/snackbar.dart';
 
@@ -45,11 +44,15 @@ class PlayerService extends ChangeNotifier {
   /// True when the service is allowed to touch the real media engine.
   bool get _engineUsable => _injectedPlayer != null || !_isTestEnv;
 
-  /// just_audio engine: created lazily, used only for .ct encrypted files
-  /// (RAM-only decrypt via [EncryptedAudioSource]). Never created on
-  /// Windows, which has no just_audio implementation.
-  AudioPlayer? _justAudio;
-  bool _usesLocalPlayback = false;
+  /// Loopback server that streams decrypted audio from `.ct` files to the
+  /// media_kit engine. Replaces the old just_audio path, which was ExoPlayer
+  /// under the hood and failed to load sources on the target device — the very
+  /// reason every other playback path already migrated to media_kit.
+  final LocalDecryptServer _decryptServer = LocalDecryptServer();
+
+  /// True while the engine is serving a decrypted `.ct` source, so the
+  /// stream-error retry below never re-opens the same local file in a loop.
+  bool _isLocalSource = false;
 
   final _positionController = StreamController<Duration>.broadcast();
   final _durationController = StreamController<Duration?>.broadcast();
@@ -102,39 +105,17 @@ class PlayerService extends ChangeNotifier {
           ? _queue[_currentIndex]
           : null;
 
-  // Only the active engine is read: _local's branch is unreachable until
-  // _usesLocalPlayback becomes true, which only happens after creation.
   Duration get position {
-    if (_usesLocalPlayback) return _local.position;
     if (!_engineUsable || !_hasEngine) return Duration.zero;
     return _engine.state.position;
   }
 
   Duration get duration {
-    if (_usesLocalPlayback) return _local.duration ?? Duration.zero;
     if (!_engineUsable || !_hasEngine) return Duration.zero;
     return _engine.state.duration;
   }
   Stream<Duration> get positionStream => _positionController.stream;
   Stream<Duration?> get durationStream => _durationController.stream;
-
-  /// Lazy just_audio instance; mirrors its state into the service streams
-  /// on first creation.
-  AudioPlayer get _local {
-    return _justAudio ??= () {
-      final p = AudioPlayer();
-      p.positionStream.listen(_positionController.add);
-      p.durationStream.listen(_durationController.add);
-      p.playerStateStream.listen((state) {
-        _isPlaying = state.playing;
-        if (state.processingState == ProcessingState.completed && _autoplay) {
-          playNext();
-        }
-        notifyListeners();
-      });
-      return p;
-    }();
-  }
 
   PlayerService({
     StreamResolver? resolver,
@@ -180,7 +161,7 @@ class PlayerService extends ChangeNotifier {
           : 'Playback error: $brief | mpv: $tail';
       showGlobalSnack(full.length > 320 ? '${full.substring(0, 320)}…' : full);
       final s = currentSong;
-      if (s != null && s.localPath == null && !_usesLocalPlayback) {
+      if (s != null && s.localPath == null && !_isLocalSource) {
         _tryPlayLocal(s);
       }
     });
@@ -233,8 +214,7 @@ class PlayerService extends ChangeNotifier {
       if (_engineUsable) {
         await _engine.stop();
       }
-      await _justAudio?.stop();
-      _usesLocalPlayback = false;
+      _isLocalSource = false;
       _isPlaying = false;
       showGlobalSnack('Local audio file not found. It may have been moved or deleted.');
       notifyListeners();
@@ -258,7 +238,7 @@ class PlayerService extends ChangeNotifier {
       }
       debugPrint('[play] resolve OK for ${song.id}, loading into media_kit');
       _mkLogTail.clear();
-      _usesLocalPlayback = false;
+      _isLocalSource = false;
       if (_engineUsable) {
         await _engine.open(Media(audioUrl), play: true);
       }
@@ -388,9 +368,8 @@ class PlayerService extends ChangeNotifier {
   Future<void> clearQueue() async {
     if (_engineUsable) {
       await _engine.stop();
-      await _justAudio?.stop();
     }
-    _usesLocalPlayback = false;
+    _isLocalSource = false;
     _isPlaying = false;
     _queue.clear();
     _originalQueue.clear();
@@ -408,9 +387,7 @@ class PlayerService extends ChangeNotifier {
       // Repeat One restarts the current track; it never advances the queue
       // and never triggers a recommendation lookup.
       await seek(Duration.zero);
-      if (_usesLocalPlayback) {
-        await _local.play();
-      } else if (_engineUsable && _hasEngine) {
+      if (_engineUsable && _hasEngine) {
         await _engine.play();
       }
       return;
@@ -512,14 +489,6 @@ class PlayerService extends ChangeNotifier {
   }
 
   Future<void> togglePlay() async {
-    if (_usesLocalPlayback) {
-      if (_local.playing) {
-        await _local.pause();
-      } else {
-        await _local.play();
-      }
-      return;
-    }
     if (!_engineUsable || !_hasEngine) return;
     if (_engine.state.playing) {
       await _engine.pause();
@@ -530,9 +499,7 @@ class PlayerService extends ChangeNotifier {
 
   Future<void> seek(Duration position) async {
     if (!_engineUsable) return;
-    if (_usesLocalPlayback) {
-      await _local.seek(position);
-    } else if (_hasEngine) {
+    if (_hasEngine) {
       await _engine.seek(position);
     }
   }
@@ -540,7 +507,6 @@ class PlayerService extends ChangeNotifier {
   Future<void> stop() async {
     if (_engineUsable) {
       await _engine.stop();
-      await _justAudio?.stop();
     }
     _currentIndex = -1;
     notifyListeners();
@@ -744,7 +710,7 @@ class PlayerService extends ChangeNotifier {
         if (!await importedFile.exists()) return false;
 
         _mkLogTail.clear();
-        _usesLocalPlayback = false;
+        _isLocalSource = false;
         if (_engineUsable) {
           await _engine.open(Media(importedFile.path), play: true);
         }
@@ -757,10 +723,16 @@ class PlayerService extends ChangeNotifier {
       final dir = await getApplicationDocumentsDirectory();
       final encryptedFile = File('${dir.path}/${song.id}.ct');
       if (await encryptedFile.exists()) {
-        final length = await encryptedFile.length();
-        _usesLocalPlayback = true;
-        await _local.setAudioSource(EncryptedAudioSource(encryptedFile, length));
-        await _local.play();
+        // Serve the decrypted audio from a loopback-only HTTP endpoint so the
+        // same media_kit engine that plays streams also plays downloads. The
+        // old just_audio path was ExoPlayer under the hood, which is exactly
+        // what this engine replaced after failing on the target device.
+        _mkLogTail.clear();
+        final uri = await _decryptServer.register(song.id, encryptedFile);
+        _isLocalSource = true;
+        if (_engineUsable) {
+          await _engine.open(Media(uri.toString()), play: true);
+        }
         StorageService.addRecentPlay(song);
         StorageService.incrementPlayCount(song.id);
         notifyListeners();
@@ -769,7 +741,7 @@ class PlayerService extends ChangeNotifier {
 
       final legacyFile = File('${dir.path}/${song.id}.mp3');
       if (await legacyFile.exists()) {
-        _usesLocalPlayback = false;
+        _isLocalSource = false;
         if (_engineUsable) {
           await _engine.open(Media(legacyFile.path), play: true);
         }
@@ -794,41 +766,8 @@ class PlayerService extends ChangeNotifier {
     // just to tear it down.
     _injectedPlayer?.dispose();
     _lazyPlayer?.dispose();
-    _justAudio?.dispose();
+    unawaited(_decryptServer.dispose());
     super.dispose();
   }
 }
 
-// In-memory streaming audio source that decrypts .ct files on-the-fly.
-// Decryption happens strictly in RAM; no unencrypted file is ever written to disk.
-// ignore: experimental_member_use
-class EncryptedAudioSource extends StreamAudioSource {
-  final File file;
-  final int fileSize;
-
-  EncryptedAudioSource(this.file, this.fileSize);
-
-  @override
-  // ignore: experimental_member_use
-  Future<StreamAudioResponse> request([int? start, int? end]) async {
-    start ??= 0;
-    end ??= fileSize;
-    final stream = _decryptStream(file.openRead(start, end), start);
-    // ignore: experimental_member_use
-    return StreamAudioResponse(
-      sourceLength: fileSize,
-      contentLength: end - start,
-      offset: start,
-      stream: stream,
-      contentType: 'audio/mpeg',
-    );
-  }
-
-  Stream<List<int>> _decryptStream(Stream<List<int>> source, int startOffset) async* {
-    var offset = startOffset;
-    await for (final chunk in source) {
-      yield CipherService.transformChunk(chunk, offset);
-      offset += chunk.length;
-    }
-  }
-}
