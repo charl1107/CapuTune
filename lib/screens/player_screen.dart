@@ -2,9 +2,11 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:provider/provider.dart';
 import '../models/song.dart';
+import '../services/download_service.dart';
 import '../services/player_service.dart';
 import '../services/theme_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/snackbar.dart';
 import '../widgets/add_to_playlist_dialog.dart';
 import 'queue_screen.dart';
 
@@ -365,6 +367,8 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   Future<void> _showOptions(BuildContext context, Song song) async {
     final playerService = context.read<PlayerService>();
+    final downloadService = context.read<DownloadService>();
+    final isLocalFile = song.localPath != null;
 
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -377,6 +381,47 @@ class _PlayerScreenState extends State<PlayerScreen>
               title: const Text('Add to playlist'),
               onTap: () => Navigator.pop(sheetContext, 'add_to_playlist'),
             ),
+            // Imported device music is already local; downloading it again
+            // would only re-stream a file that is already on the phone.
+            if (!isLocalFile)
+              Consumer<DownloadService>(
+                builder: (context, downloads, _) {
+                  final state = downloads.getState(song.id);
+                  if (state == DownloadState.downloading) {
+                    final progress = downloads.getProgress(song.id);
+                    return ListTile(
+                      // Duplicate taps are ignored while a download runs
+                      // (DownloadService also guards this).
+                      enabled: false,
+                      leading: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          value: progress > 0 ? progress : null,
+                        ),
+                      ),
+                      title: Text(
+                        progress > 0
+                            ? 'Downloading… ${(progress * 100).toStringAsFixed(0)}%'
+                            : 'Resolving audio…',
+                      ),
+                    );
+                  }
+                  final downloaded = state == DownloadState.downloaded;
+                  return ListTile(
+                    leading: Icon(
+                      downloaded ? Icons.delete_outline : Icons.download,
+                      color: downloaded ? Colors.red : null,
+                    ),
+                    title: Text(downloaded ? 'Delete download' : 'Download'),
+                    onTap: () => Navigator.pop(
+                      sheetContext,
+                      downloaded ? 'delete_download' : 'download',
+                    ),
+                  );
+                },
+              ),
             SwitchListTile(
               secondary: Icon(
                 Icons.sensors,
@@ -427,6 +472,26 @@ class _PlayerScreenState extends State<PlayerScreen>
 
     if (action == 'add_to_playlist' && mounted) {
       await showAddToPlaylistDialog(this.context, song);
+      return;
+    }
+    if (action == null) return;
+
+    switch (action) {
+      case 'download':
+        showGlobalSnack('Downloading “${song.title}”…');
+        await downloadService.downloadSong(song);
+        // Terminal feedback: a downloaded song only ever lands here after
+        // the audio file is fully written and its metadata persisted.
+        if (downloadService.getState(song.id) == DownloadState.downloaded) {
+          showGlobalSnack('“${song.title}” downloaded — find it in Downloads');
+        } else {
+          showGlobalSnack(downloadService.errorMessage ?? 'Download failed');
+        }
+        break;
+      case 'delete_download':
+        await downloadService.removeDownload(song.id);
+        showGlobalSnack('Download removed');
+        break;
     }
   }
 
