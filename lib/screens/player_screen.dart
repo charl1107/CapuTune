@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/song.dart';
 import '../services/download_service.dart';
 import '../services/player_service.dart';
@@ -463,7 +464,9 @@ class _PlayerScreenState extends State<PlayerScreen>
             ListTile(
               leading: const Icon(Icons.share),
               title: const Text('Share'),
-              onTap: () => Navigator.pop(sheetContext),
+              onTap: () {
+                Navigator.pop(sheetContext, 'share');
+              },
             ),
           ],
         ),
@@ -491,6 +494,17 @@ class _PlayerScreenState extends State<PlayerScreen>
       case 'delete_download':
         await downloadService.removeDownload(song.id);
         showGlobalSnack('Download removed');
+        break;
+      case 'share':
+        // song.id is the YouTube video id, so this reconstructs a link that
+        // opens the same track in any browser or the YT Music app.
+        await SharePlus.instance.share(
+          ShareParams(
+            subject: song.title,
+            text: '${song.title} — ${song.artist}\n'
+                'https://music.youtube.com/watch?v=${song.id}',
+          ),
+        );
         break;
     }
   }
