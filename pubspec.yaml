@@ -1,7 +1,7 @@
 name: caputune
 description: CapuTune - A full music player app
 publish_to: 'none'
-version: 1.0.22+23
+version: 1.0.23+24
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
