@@ -197,4 +197,49 @@ void main() {
     await handler.play(); // already playing -> no-op
     expect(handler.playbackState.value.playing, player.isPlaying);
   });
+
+  test('sleep timer persists across songs and reports its end time', () async {
+    final player = PlayerService(
+      resolver: _FakeStreamResolver(),
+      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+    );
+
+    expect(player.sleepTimerEndsAt, isNull);
+
+    player.setSleepTimer(const Duration(minutes: 30));
+    final endsAt = player.sleepTimerEndsAt;
+    expect(endsAt, isNotNull);
+    // Allow a small scheduling skew between setting and reading the clock.
+    expect(
+      endsAt!.difference(DateTime.now()).inMinutes,
+      inInclusiveRange(29, 30),
+    );
+
+    // The timer must survive queue navigation — it belongs to the session,
+    // not to one song.
+    await player.play(_song('sleep_song'));
+    expect(player.sleepTimerEndsAt, endsAt);
+
+    player.cancelSleepTimer();
+    expect(player.sleepTimerEndsAt, isNull);
+
+    // Cancel is idempotent.
+    player.cancelSleepTimer();
+    expect(player.sleepTimerEndsAt, isNull);
+  });
+
+  test('replacing a sleep timer restarts it rather than stacking', () async {
+    final player = PlayerService(
+      resolver: _FakeStreamResolver(),
+      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+    );
+
+    player.setSleepTimer(const Duration(minutes: 60));
+    final firstEnd = player.sleepTimerEndsAt;
+
+    player.setSleepTimer(const Duration(minutes: 15));
+    final secondEnd = player.sleepTimerEndsAt;
+
+    expect(secondEnd!.isBefore(firstEnd!), isTrue);
+  });
 }

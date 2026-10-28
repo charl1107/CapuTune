@@ -519,6 +519,24 @@ class _PlayerScreenState extends State<PlayerScreen>
                   Navigator.pop(sheetContext, 'speed');
                 },
               ),
+              ListTile(
+                leading: Icon(
+                  Icons.bedtime,
+                  color: playerService.sleepTimerEndsAt != null
+                      ? Theme.of(sheetContext).colorScheme.primary
+                      : null,
+                ),
+                title: const Text('Sleep timer'),
+                subtitle: playerService.sleepTimerEndsAt != null
+                    ? Text(
+                        'Stops at '
+                        '${TimeOfDay.fromDateTime(playerService.sleepTimerEndsAt!).format(sheetContext)}',
+                      )
+                    : null,
+                onTap: () {
+                  Navigator.pop(sheetContext, 'sleep_timer');
+                },
+              ),
             ],
           ),
         ),
@@ -531,6 +549,10 @@ class _PlayerScreenState extends State<PlayerScreen>
     }
     if (action == 'speed' && mounted) {
       await _showSpeedPicker(this.context, playerService);
+      return;
+    }
+    if (action == 'sleep_timer' && mounted) {
+      await _showSleepTimerPicker(this.context, playerService);
       return;
     }
     if (action == null) return;
@@ -606,6 +628,71 @@ class _PlayerScreenState extends State<PlayerScreen>
                   Navigator.pop(sheetContext);
                 },
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Second-level sheet for the sleep timer: off or one of three presets.
+  /// Setting a timer pauses playback when it fires; the queue is kept so the
+  /// listener can resume later.
+  Future<void> _showSleepTimerPicker(
+    BuildContext context,
+    PlayerService playerService,
+  ) {
+    const presets = [15, 30, 60];
+    return showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'Sleep timer',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            ListTile(
+              leading: Icon(
+                playerService.sleepTimerEndsAt == null
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_off,
+                color: playerService.sleepTimerEndsAt == null
+                    ? Theme.of(sheetContext).colorScheme.primary
+                    : null,
+              ),
+              title: const Text('Off'),
+              onTap: () {
+                playerService.cancelSleepTimer();
+                Navigator.pop(sheetContext);
+              },
+            ),
+            ...presets.map(
+              (minutes) {
+                final endsAt = playerService.sleepTimerEndsAt;
+                final isActive = endsAt != null &&
+                    endsAt.difference(DateTime.now()).inMinutes.round() ==
+                        minutes;
+                return ListTile(
+                  leading: Icon(
+                    isActive
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: isActive
+                        ? Theme.of(sheetContext).colorScheme.primary
+                        : null,
+                  ),
+                  title: Text('$minutes minutes'),
+                  onTap: () {
+                    playerService.setSleepTimer(Duration(minutes: minutes));
+                    Navigator.pop(sheetContext);
+                  },
+                );
+              },
             ),
           ],
         ),

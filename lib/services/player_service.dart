@@ -529,6 +529,42 @@ class PlayerService extends ChangeNotifier {
     }
   }
 
+  Timer? _sleepTimer;
+
+  /// When the sleep timer fires, or null when none is set.
+  DateTime? get sleepTimerEndsAt => _sleepTimerEndsAt;
+  DateTime? _sleepTimerEndsAt;
+
+  /// Starts (or replaces) a timer that pauses playback after [duration].
+  ///
+  /// Pause — not stop — so the queue survives and playback resumes where the
+  /// listener left off when they press play in the morning.
+  void setSleepTimer(Duration duration) {
+    _sleepTimer?.cancel();
+    _sleepTimer = Timer(duration, _onSleepTimerFired);
+    _sleepTimerEndsAt = DateTime.now().add(duration);
+    notifyListeners();
+  }
+
+  /// Cancels any pending sleep timer. No-op when none is running.
+  void cancelSleepTimer() {
+    if (_sleepTimer == null && _sleepTimerEndsAt == null) return;
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepTimerEndsAt = null;
+    notifyListeners();
+  }
+
+  void _onSleepTimerFired() {
+    _sleepTimer = null;
+    _sleepTimerEndsAt = null;
+    // Engine-guarded pause: mirrors togglePlay without flipping its state.
+    if (_engineUsable && _hasEngine && _engine.state.playing) {
+      _engine.pause();
+    }
+    notifyListeners();
+  }
+
   Future<void> stop() async {
     if (_engineUsable) {
       await _engine.stop();
