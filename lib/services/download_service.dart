@@ -53,7 +53,10 @@ class DownloadService extends ChangeNotifier {
         _progress[song.id] = 0.0;
         return;
       } else {
-        final url = await _resolver.resolve(song.id);
+        final url = await _resolver.resolve(
+          song.id,
+          quality: StorageService.getAudioQuality(),
+        );
         if (url == null) {
           _errorMessage = 'Failed to get audio URL';
           _states[song.id] = DownloadState.idle;

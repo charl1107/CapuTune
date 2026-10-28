@@ -13,6 +13,9 @@ typedef UrlProbe = Future<bool> Function(String url);
 /// Resolves [videoId] to a playable stream URL using youtube_explode_dart,
 /// verifying each candidate URL before returning it.
 ///
+/// [quality] selects which audio-only stream is preferred (see
+/// [pickAudioStream]); null keeps the previous highest-bitrate behaviour.
+///
 /// YouTube intermittently hands out stream URLs that answer 403 at the CDN,
 /// and stubs audio-only URLs more often than muxed ones. Candidates are
 /// therefore probed with a small open-ended ranged request in preference
@@ -23,19 +26,26 @@ typedef UrlProbe = Future<bool> Function(String url);
 /// extraction fails, or when no live URL is obtained within [maxAttempts]
 /// (extraction errors propagate to the caller — `StreamResolver.resolve` in
 /// `stream_resolver.dart` converts them to null).
-Future<String?> defaultLookup(String videoId) => resolveWithRetry(
-      _extractCandidates,
+Future<String?> defaultLookup(
+  String videoId, {
+  String? quality,
+}) =>
+    resolveWithRetry(
+      (id) => _extractCandidates(id, quality: quality),
       probeUrl,
       videoId,
     );
 
-Future<List<String>?> _extractCandidates(String videoId) async {
+Future<List<String>?> _extractCandidates(
+  String videoId, {
+  String? quality,
+}) async {
   final yt = YoutubeExplode();
   try {
     final manifest = await yt.videos.streamsClient.getManifest(videoId);
+    final audio = pickAudioStream(manifest, quality);
     final candidates = <String>[
-      if (manifest.audioOnly.isNotEmpty)
-        manifest.audioOnly.withHighestBitrate().url.toString(),
+      if (audio != null) audio.url.toString(),
       if (manifest.muxed.isNotEmpty)
         manifest.muxed.withHighestBitrate().url.toString(),
     ];
@@ -43,6 +53,34 @@ Future<List<String>?> _extractCandidates(String videoId) async {
   } finally {
     yt.close();
   }
+}
+
+/// Picks the audio-only stream that best matches the user's quality setting.
+///
+/// '320kbps' keeps the historical behaviour of taking the highest available
+/// bitrate (YouTube's audio-only top out around 160 kbps Opus, so 320 is
+/// effectively "best there is"). Lower targets pick the closest stream at or
+/// below the target — saving bandwidth without undershooting — and fall back
+/// to the lowest stream when everything exceeds the target. Unknown or null
+/// quality values behave like '320kbps'.
+@visibleForTesting
+AudioOnlyStreamInfo? pickAudioStream(StreamManifest manifest, String? quality) {
+  if (manifest.audioOnly.isEmpty) return null;
+  final streams = manifest.audioOnly.toList()
+    ..sort((a, b) => a.bitrate.compareTo(b.bitrate));
+  final targetKbps = switch (quality) {
+    '128kbps' => 128,
+    '192kbps' => 192,
+    _ => 320,
+  };
+  if (targetKbps >= 320) {
+    return streams.last;
+  }
+  // Closest stream at or below the target, else the cheapest available.
+  for (final stream in streams.reversed) {
+    if (stream.bitrate.kiloBitsPerSecond <= targetKbps) return stream;
+  }
+  return streams.first;
 }
 
 /// Extracts and probes up to [maxAttempts] times, returning the first

@@ -2,7 +2,10 @@ import 'stream_resolver_lookup_stub.dart'
     if (dart.library.io) 'stream_resolver_lookup_io.dart' as lookup_io;
 
 /// Signature for the platform-specific audio URL lookup.
-typedef AudioUrlLookup = Future<String?> Function(String videoId);
+typedef AudioUrlLookup = Future<String?> Function(
+  String videoId, {
+  String? quality,
+});
 
 /// Resolves a YouTube video ID to a playable audio stream URL.
 ///
@@ -20,9 +23,13 @@ class StreamResolver {
 
   /// Returns the audio stream URL for [videoId], or null when extraction
   /// fails, is unsupported on this platform, or no audio stream exists.
-  Future<String?> resolve(String videoId) async {
+  ///
+  /// [quality] is the user's audio-quality setting (e.g. '128kbps',
+  /// '320kbps'); null or an unrecognized value keeps the previous
+  /// highest-bitrate behaviour.
+  Future<String?> resolve(String videoId, {String? quality}) async {
     try {
-      return await _lookup(videoId);
+      return await _lookup(videoId, quality: quality);
     } catch (e) {
       // ignore: avoid_print
       print('[resolve] extraction failed for $videoId: $e');

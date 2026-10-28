@@ -229,7 +229,7 @@ class PlayerService extends ChangeNotifier {
 
     // Stream on-device
     try {
-      final audioUrl = await _resolver.resolve(song.id);
+      final audioUrl = await _resolver.resolve(song.id, quality: _audioQuality);
       if (audioUrl == null) {
         debugPrint('[play] resolve returned null for ${song.id}');
         showGlobalSnack(

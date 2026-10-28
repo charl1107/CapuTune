@@ -12,7 +12,8 @@ import 'package:caputune/services/stream_resolver.dart';
 
 class _FakeStreamResolver implements StreamResolver {
   @override
-  Future<String?> resolve(String id) async => 'http://test.audio.url';
+  Future<String?> resolve(String id, {String? quality}) async =>
+      'http://test.audio.url';
 
   @override
   dynamic noSuchMethod(Invocation invocation) => null;

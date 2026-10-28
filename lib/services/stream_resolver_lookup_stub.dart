@@ -4,4 +4,7 @@
 /// `stream_resolver_lookup_io.dart` and is pulled in via conditional import on
 /// `dart.library.io`. On the web this stub is used instead and always reports
 /// that no stream URL is available.
-Future<String?> defaultLookup(String videoId) async => null;
+Future<String?> defaultLookup(
+  String videoId, {
+  String? quality,
+}) async => null;
