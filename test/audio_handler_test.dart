@@ -72,6 +72,27 @@ void main() {
     expect(handler.playbackState.value.processingState, AudioProcessingState.ready);
   });
 
+  test('CapuTuneAudioHandler reports the configured playback rate', () async {
+    final player = PlayerService(
+      resolver: _FakeStreamResolver(),
+      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+    );
+
+    final handler = CapuTuneAudioHandler(player);
+    addTearDown(handler.dispose);
+
+    await player.play(_song('rate_song'));
+
+    expect(handler.playbackState.value.speed, 1.0);
+
+    // The session must advertise the real rate, not a hardcoded 1.0, so the
+    // system media card shows the truth for 1.5x playback etc. setRate
+    // notifies listeners, which triggers the handler's broadcast.
+    await player.setRate(1.5);
+
+    expect(handler.playbackState.value.speed, 1.5);
+  });
+
   test('CapuTuneAudioHandler exposes system actions and transport controls', () async {
     final player = PlayerService(
       resolver: _FakeStreamResolver(),

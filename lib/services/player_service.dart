@@ -80,6 +80,7 @@ class PlayerService extends ChangeNotifier {
   bool _isLoadingRecommendations = false;
   Future<void>? _radioQueueFuture;
   String _audioQuality = '320kbps';
+  double _rate = 1.0;
   bool _isPlaying = false;
   bool _shuffleMode = false;
   RepeatMode _repeatMode = RepeatMode.off;
@@ -97,6 +98,7 @@ class PlayerService extends ChangeNotifier {
   bool get continueWithSimilarAfterPlaylist => _continueWithSimilarAfterPlaylist;
   bool get isPlaylistSource => _isPlaylistSource;
   String get audioQuality => _audioQuality;
+  double get rate => _rate;
   bool get isPlaying => _isPlaying;
   bool get shuffleMode => _shuffleMode;
   RepeatMode get repeatMode => _repeatMode;
@@ -182,6 +184,7 @@ class PlayerService extends ChangeNotifier {
     _continueWithSimilarAfterPlaylist =
         StorageService.getContinueWithSimilarAfterPlaylist();
     _audioQuality = StorageService.getAudioQuality();
+    _rate = StorageService.getSetting<double>(1.0, key: 'playbackRate');
     notifyListeners();
   }
 
@@ -241,6 +244,7 @@ class PlayerService extends ChangeNotifier {
       _isLocalSource = false;
       if (_engineUsable) {
         await _engine.open(Media(audioUrl), play: true);
+        await _applyRateToEngine();
       }
       StorageService.addRecentPlay(song);
       StorageService.incrementPlayCount(song.id);
@@ -504,6 +508,27 @@ class PlayerService extends ChangeNotifier {
     }
   }
 
+  /// Applies [rate] (0.5–2.0) to the engine and persists it, so songs opened
+  /// later resume at the same speed. In test environments without an engine
+  /// the value is still stored so the UI reflects the choice.
+  Future<void> setRate(double rate) async {
+    final clamped = rate.clamp(0.5, 2.0);
+    _rate = clamped;
+    StorageService.setSetting(clamped, key: 'playbackRate');
+    if (_engineUsable && _hasEngine) {
+      await _engine.setRate(clamped);
+    }
+    notifyListeners();
+  }
+
+  /// Re-applies the persisted rate after a new engine source is opened;
+  /// media_kit resets the rate to 1.0 on `open`.
+  Future<void> _applyRateToEngine() async {
+    if (_engineUsable && _hasEngine && _rate != 1.0) {
+      await _engine.setRate(_rate);
+    }
+  }
+
   Future<void> stop() async {
     if (_engineUsable) {
       await _engine.stop();
@@ -713,6 +738,7 @@ class PlayerService extends ChangeNotifier {
         _isLocalSource = false;
         if (_engineUsable) {
           await _engine.open(Media(importedFile.path), play: true);
+          await _applyRateToEngine();
         }
         StorageService.addRecentPlay(song);
         StorageService.incrementPlayCount(song.id);
@@ -732,6 +758,7 @@ class PlayerService extends ChangeNotifier {
         _isLocalSource = true;
         if (_engineUsable) {
           await _engine.open(Media(uri.toString()), play: true);
+          await _applyRateToEngine();
         }
         StorageService.addRecentPlay(song);
         StorageService.incrementPlayCount(song.id);
@@ -744,6 +771,7 @@ class PlayerService extends ChangeNotifier {
         _isLocalSource = false;
         if (_engineUsable) {
           await _engine.open(Media(legacyFile.path), play: true);
+          await _applyRateToEngine();
         }
         StorageService.addRecentPlay(song);
         StorageService.incrementPlayCount(song.id);

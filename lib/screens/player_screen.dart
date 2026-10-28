@@ -76,7 +76,8 @@ class _PlayerScreenState extends State<PlayerScreen>
             children: [
               // App bar
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppColors.spacingS),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: AppColors.spacingS),
                 child: Row(
                   children: [
                     IconButton(
@@ -98,7 +99,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                       onPressed: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (_) => const QueueScreen()),
+                          MaterialPageRoute(
+                              builder: (_) => const QueueScreen()),
                         );
                       },
                     ),
@@ -145,7 +147,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.05 + index * 0.01),
+                                  color: Colors.white
+                                      .withValues(alpha: 0.05 + index * 0.01),
                                   width: 1,
                                 ),
                               ),
@@ -162,20 +165,28 @@ class _PlayerScreenState extends State<PlayerScreen>
                                     placeholder: (context, url) => Container(
                                       width: 160,
                                       height: 160,
-                                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
                                     ),
-                                    errorWidget: (context, url, error) => Container(
+                                    errorWidget: (context, url, error) =>
+                                        Container(
                                       width: 160,
                                       height: 160,
                                       decoration: BoxDecoration(
                                         gradient: LinearGradient(
                                           colors: [
-                                            Theme.of(context).colorScheme.primary,
-                                            Theme.of(context).colorScheme.secondary,
+                                            Theme.of(context)
+                                                .colorScheme
+                                                .primary,
+                                            Theme.of(context)
+                                                .colorScheme
+                                                .secondary,
                                           ],
                                         ),
                                       ),
-                                      child: const Icon(Icons.music_note, color: Colors.white, size: 60),
+                                      child: const Icon(Icons.music_note,
+                                          color: Colors.white, size: 60),
                                     ),
                                   )
                                 : Container(
@@ -185,11 +196,14 @@ class _PlayerScreenState extends State<PlayerScreen>
                                       gradient: LinearGradient(
                                         colors: [
                                           Theme.of(context).colorScheme.primary,
-                                          Theme.of(context).colorScheme.secondary,
+                                          Theme.of(context)
+                                              .colorScheme
+                                              .secondary,
                                         ],
                                       ),
                                     ),
-                                    child: const Icon(Icons.music_note, color: Colors.white, size: 60),
+                                    child: const Icon(Icons.music_note,
+                                        color: Colors.white, size: 60),
                                   ),
                           ),
                           // Center dot
@@ -213,7 +227,8 @@ class _PlayerScreenState extends State<PlayerScreen>
               ),
               // Song info
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppColors.spacingL),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: AppColors.spacingL),
                 child: Column(
                   children: [
                     Text(
@@ -240,7 +255,8 @@ class _PlayerScreenState extends State<PlayerScreen>
               const SizedBox(height: AppColors.spacingL),
               // Progress bar
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppColors.spacingL),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: AppColors.spacingL),
                 child: StreamBuilder<Duration>(
                   stream: playerService.positionStream,
                   builder: (context, snapshot) {
@@ -251,22 +267,31 @@ class _PlayerScreenState extends State<PlayerScreen>
                         SliderTheme(
                           data: SliderThemeData(
                             trackHeight: 4,
-                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                            overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-                            activeTrackColor: Theme.of(context).colorScheme.primary,
-                            inactiveTrackColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                            thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 6),
+                            overlayShape: const RoundSliderOverlayShape(
+                                overlayRadius: 14),
+                            activeTrackColor:
+                                Theme.of(context).colorScheme.primary,
+                            inactiveTrackColor: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
                             thumbColor: Theme.of(context).colorScheme.primary,
                           ),
                           child: Slider(
                             value: position.inSeconds.toDouble(),
-                            max: duration.inSeconds.toDouble().clamp(1, double.infinity),
+                            max: duration.inSeconds
+                                .toDouble()
+                                .clamp(1, double.infinity),
                             onChanged: (value) {
-                              playerService.seek(Duration(seconds: value.toInt()));
+                              playerService
+                                  .seek(Duration(seconds: value.toInt()));
                             },
                           ),
                         ),
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: AppColors.spacingS),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: AppColors.spacingS),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -274,14 +299,18 @@ class _PlayerScreenState extends State<PlayerScreen>
                                 _formatDuration(position),
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
                                 ),
                               ),
                               Text(
                                 _formatDuration(duration),
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
                                 ),
                               ),
                             ],
@@ -295,7 +324,8 @@ class _PlayerScreenState extends State<PlayerScreen>
               const SizedBox(height: AppColors.spacingM),
               // Controls
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppColors.spacingXL),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: AppColors.spacingXL),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
@@ -321,7 +351,10 @@ class _PlayerScreenState extends State<PlayerScreen>
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: 0.4),
                             blurRadius: 16,
                             offset: const Offset(0, 4),
                           ),
@@ -331,7 +364,9 @@ class _PlayerScreenState extends State<PlayerScreen>
                         icon: AnimatedSwitcher(
                           duration: const Duration(milliseconds: 200),
                           child: Icon(
-                            playerService.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                            playerService.isPlaying
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
                             key: ValueKey(playerService.isPlaying),
                             color: Theme.of(context).colorScheme.onPrimary,
                             size: 40,
@@ -374,107 +409,128 @@ class _PlayerScreenState extends State<PlayerScreen>
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.playlist_add),
-              title: const Text('Add to playlist'),
-              onTap: () => Navigator.pop(sheetContext, 'add_to_playlist'),
-            ),
-            // Imported device music is already local; downloading it again
-            // would only re-stream a file that is already on the phone.
-            if (!isLocalFile)
-              Consumer<DownloadService>(
-                builder: (context, downloads, _) {
-                  final state = downloads.getState(song.id);
-                  if (state == DownloadState.downloading) {
-                    final progress = downloads.getProgress(song.id);
-                    return ListTile(
-                      // Duplicate taps are ignored while a download runs
-                      // (DownloadService also guards this).
-                      enabled: false,
-                      leading: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          value: progress > 0 ? progress : null,
+        // Scrollable so the menu degrades to scrolling on short viewports
+        // (small phones, landscape) instead of overflowing.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.playlist_add),
+                title: const Text('Add to playlist'),
+                onTap: () => Navigator.pop(sheetContext, 'add_to_playlist'),
+              ),
+              // Imported device music is already local; downloading it again
+              // would only re-stream a file that is already on the phone.
+              if (!isLocalFile)
+                Consumer<DownloadService>(
+                  builder: (context, downloads, _) {
+                    final state = downloads.getState(song.id);
+                    if (state == DownloadState.downloading) {
+                      final progress = downloads.getProgress(song.id);
+                      return ListTile(
+                        // Duplicate taps are ignored while a download runs
+                        // (DownloadService also guards this).
+                        enabled: false,
+                        leading: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            value: progress > 0 ? progress : null,
+                          ),
                         ),
+                        title: Text(
+                          progress > 0
+                              ? 'Downloading… ${(progress * 100).toStringAsFixed(0)}%'
+                              : 'Resolving audio…',
+                        ),
+                      );
+                    }
+                    final downloaded = state == DownloadState.downloaded;
+                    return ListTile(
+                      leading: Icon(
+                        downloaded ? Icons.delete_outline : Icons.download,
+                        color: downloaded ? Colors.red : null,
                       ),
-                      title: Text(
-                        progress > 0
-                            ? 'Downloading… ${(progress * 100).toStringAsFixed(0)}%'
-                            : 'Resolving audio…',
+                      title: Text(downloaded ? 'Delete download' : 'Download'),
+                      onTap: () => Navigator.pop(
+                        sheetContext,
+                        downloaded ? 'delete_download' : 'download',
                       ),
                     );
-                  }
-                  final downloaded = state == DownloadState.downloaded;
-                  return ListTile(
-                    leading: Icon(
-                      downloaded ? Icons.delete_outline : Icons.download,
-                      color: downloaded ? Colors.red : null,
-                    ),
-                    title: Text(downloaded ? 'Delete download' : 'Download'),
-                    onTap: () => Navigator.pop(
-                      sheetContext,
-                      downloaded ? 'delete_download' : 'download',
-                    ),
-                  );
+                  },
+                ),
+              SwitchListTile(
+                secondary: Icon(
+                  Icons.sensors,
+                  color: playerService.radioAutoplay
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+                title: const Text('Radio Autoplay'),
+                subtitle: Text(
+                  playerService.radioAutoplay
+                      ? 'Similar songs play automatically'
+                      : 'Off',
+                ),
+                value: playerService.radioAutoplay,
+                onChanged: (val) {
+                  playerService.setRadioAutoplay(val);
+                  Navigator.pop(sheetContext);
                 },
               ),
-            SwitchListTile(
-              secondary: Icon(
-                Icons.sensors,
-                color: playerService.radioAutoplay
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
+              ListTile(
+                leading: Icon(
+                  playerService.isFavorite(song.id)
+                      ? Icons.favorite
+                      : Icons.favorite_border,
+                  color: playerService.isFavorite(song.id)
+                      ? AppColors.accentPink
+                      : null,
+                ),
+                title: Text(
+                  playerService.isFavorite(song.id)
+                      ? 'Remove from favorites'
+                      : 'Add to favorites',
+                ),
+                onTap: () {
+                  playerService.toggleFavorite(song);
+                  Navigator.pop(sheetContext);
+                },
               ),
-              title: const Text('Radio Autoplay'),
-              subtitle: Text(
-                playerService.radioAutoplay
-                    ? 'Similar songs play automatically'
-                    : 'Off',
+              ListTile(
+                leading: const Icon(Icons.share),
+                title: const Text('Share'),
+                onTap: () {
+                  Navigator.pop(sheetContext, 'share');
+                },
               ),
-              value: playerService.radioAutoplay,
-              onChanged: (val) {
-                playerService.setRadioAutoplay(val);
-                Navigator.pop(sheetContext);
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                playerService.isFavorite(song.id)
-                    ? Icons.favorite
-                    : Icons.favorite_border,
-                color: playerService.isFavorite(song.id)
-                    ? AppColors.accentPink
-                    : null,
+              ListTile(
+                leading: const Icon(Icons.speed),
+                title: const Text('Playback speed'),
+                trailing: Text(
+                  _rateLabel(playerService.rate),
+                  style: TextStyle(
+                    color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext, 'speed');
+                },
               ),
-              title: Text(
-                playerService.isFavorite(song.id)
-                    ? 'Remove from favorites'
-                    : 'Add to favorites',
-              ),
-              onTap: () {
-                playerService.toggleFavorite(song);
-                Navigator.pop(sheetContext);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.share),
-              title: const Text('Share'),
-              onTap: () {
-                Navigator.pop(sheetContext, 'share');
-              },
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
 
     if (action == 'add_to_playlist' && mounted) {
       await showAddToPlaylistDialog(this.context, song);
+      return;
+    }
+    if (action == 'speed' && mounted) {
+      await _showSpeedPicker(this.context, playerService);
       return;
     }
     if (action == null) return;
@@ -507,6 +563,54 @@ class _PlayerScreenState extends State<PlayerScreen>
         );
         break;
     }
+  }
+
+  /// '1.0' renders as '1x', other rates keep their decimal form ('1.25x').
+  String _rateLabel(double rate) =>
+      rate == rate.roundToDouble() ? '${rate.round()}x' : '${rate}x';
+
+  /// Second-level sheet for choosing a playback rate. The options sheet has
+  /// already popped by the time this opens, so the returned future completes
+  /// normally.
+  Future<void> _showSpeedPicker(
+    BuildContext context,
+    PlayerService playerService,
+  ) {
+    const rates = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+    return showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'Playback speed',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            ...rates.map(
+              (rate) => ListTile(
+                leading: Icon(
+                  playerService.rate == rate
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: playerService.rate == rate
+                      ? Theme.of(sheetContext).colorScheme.primary
+                      : null,
+                ),
+                title: Text(_rateLabel(rate)),
+                onTap: () {
+                  playerService.setRate(rate);
+                  Navigator.pop(sheetContext);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String _formatDuration(Duration duration) {

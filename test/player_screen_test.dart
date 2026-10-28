@@ -54,6 +54,9 @@ class _FakePlayerService implements PlayerService {
   Duration get duration => const Duration(minutes: 3);
 
   @override
+  double get rate => 1.0;
+
+  @override
   Stream<Duration> get positionStream => const Stream<Duration>.empty();
 
   @override

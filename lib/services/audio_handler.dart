@@ -82,7 +82,7 @@ class CapuTuneAudioHandler extends BaseAudioHandler with SeekHandler {
       playing: isPlaying,
       updatePosition: _playerService.position,
       bufferedPosition: _playerService.position,
-      speed: 1.0,
+      speed: _playerService.rate,
       queueIndex: _playerService.currentIndex >= 0 ? _playerService.currentIndex : null,
       repeatMode: _toAudioServiceRepeatMode(_playerService.repeatMode),
       shuffleMode: _playerService.shuffleMode
