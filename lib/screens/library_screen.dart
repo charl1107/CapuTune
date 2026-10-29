@@ -9,6 +9,7 @@ import '../services/library_export_service.dart';
 import '../services/playlist_url.dart';
 import '../services/storage_service.dart';
 import '../theme/app_colors.dart';
+import 'collections_screen.dart';
 import 'playlist_detail_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
@@ -481,6 +482,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
       appBar: AppBar(
         title: const Text('Library'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.album),
+            tooltip: 'Albums & artists',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => const CollectionsScreen(),
+              ),
+            ),
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) {
