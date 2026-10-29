@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:path_provider/path_provider.dart';
@@ -259,6 +260,7 @@ class PlayerService extends ChangeNotifier {
       _mkLogTail.clear();
       _isLocalSource = false;
       if (_engineUsable) {
+        _lastStreamUrl = audioUrl;
         await _engine.open(Media(audioUrl), play: true);
         await _applyRateToEngine();
         // A clean open means the retry bookkeeping starts fresh.
@@ -578,13 +580,34 @@ class PlayerService extends ChangeNotifier {
     return markers.any(lowered.contains);
   }
 
-  static const int _maxStreamRetries = 2;
-  static const Duration _streamRetryBaseDelay = Duration(milliseconds: 1200);
+  static const int _maxStreamRetries = 3;
+  static const Duration _streamRetryBaseDelay = Duration(milliseconds: 1500);
+
+  /// Backoff for stream-retry attempt [attempt] (1-based): exponential from
+  /// [attempt], scaled by [jitter] (0–1) into a ±30%-ish band so simultaneous
+  /// failures across devices don't re-strike in lockstep.
+  @visibleForTesting
+  static Duration streamRetryDelay(int attempt, double jitter) {
+    final exponential = _streamRetryBaseDelay.inMilliseconds * (1 << (attempt - 1));
+    final scaled = exponential * (0.7 + 0.6 * jitter.clamp(0.0, 1.0));
+    return Duration(milliseconds: scaled.round());
+  }
 
   String? _streamRetrySongId;
   int _streamRetryCount = 0;
   Timer? _streamRetryTimer;
   bool _streamRetryPending = false;
+
+  /// The stream URL most recently opened with the engine. In-memory only
+  /// (never logged — it is a signed URL); used by the give-up diagnosis to
+  /// ask whether this network can still reach that host at all.
+  String? _lastStreamUrl;
+
+  static final Random _jitterRandom = Random();
+
+  /// Random jitter (0–1) for the retry backoff, so a fleet of devices that
+  /// fail together don't retry in lockstep.
+  double _jitter() => _jitterRandom.nextDouble();
 
   void _cancelStreamRetry({bool resetCounters = false}) {
     _streamRetryTimer?.cancel();
@@ -608,10 +631,12 @@ class PlayerService extends ChangeNotifier {
     if (_streamRetryCount >= _maxStreamRetries) {
       _cancelStreamRetry();
       showGlobalSnack(
-        'Playback failed: the song’s server is unreachable. '
-        'Check your internet connection and try again.',
+        'Playback failed after $_maxStreamRetries retries. '
+        'Checking why this network can’t reach YouTube…',
       );
       _tryPlayLocal(song);
+      // Diagnosis runs after the fallback so the refind message lands last.
+      unawaited(_diagnoseUnreachableNetwork(song.id));
       return;
     }
 
@@ -623,7 +648,7 @@ class PlayerService extends ChangeNotifier {
       '($attempt/$_maxStreamRetries)…',
     );
     _streamRetryTimer = Timer(
-      _streamRetryBaseDelay * attempt,
+      streamRetryDelay(attempt, _jitter()),
       () => _retryStream(song),
     );
   }
@@ -638,16 +663,22 @@ class PlayerService extends ChangeNotifier {
       final resumePosition = _engine.state.position;
       final url = await _resolver.resolve(song.id, quality: _audioQuality);
       if (url == null || currentSong?.id != song.id) {
-        showGlobalSnack(
-          'Playback failed: the song’s server is unreachable. '
-          'Check your internet connection and try again.',
-        );
+        if (currentSong?.id == song.id) {
+          showGlobalSnack(
+            'Playback failed: couldn’t reach YouTube to refresh this song. '
+            'Checking this network…',
+          );
+          // No engine open happened, so the fallback is the only option;
+          // the diagnosis still tells the user who is unreachable.
+          unawaited(_diagnoseUnreachableNetwork(song.id));
+        }
         _streamRetryCount = 0;
         _streamRetrySongId = null;
         await _tryPlayLocal(song);
         return;
       }
       _mkLogTail.clear();
+      _lastStreamUrl = url;
       await _engine.open(Media(url), play: true);
       if (resumePosition > Duration.zero) {
         await _engine.seek(resumePosition);
@@ -659,6 +690,75 @@ class PlayerService extends ChangeNotifier {
       // keeps the attempt counter honest and eventually gives up cleanly.
     } finally {
       _streamRetryPending = false;
+    }
+  }
+
+  // --- Differential network diagnosis -------------------------------------
+  //
+  // All re-resolve retries exhausted: figure out *who* is unreachable and
+  // report it honestly. If the Wi-Fi router or ISP can't reach Google's
+  // media servers, that is a network-path problem no app code can fix — the
+  // user needs to switch to mobile data or another network, and deserves to
+  // be told so in plain language.
+
+  /// Neutral endpoint: completing an HTTP exchange with Google's
+  /// connectivity checker proves the network itself works.
+  static const String _connectivityCheckUrl =
+      'https://www.google.com/generate_204';
+
+  Future<void> _diagnoseUnreachableNetwork(String songId) async {
+    final baselineOk = await _probeReachable(_connectivityCheckUrl);
+    final streamUrl = _lastStreamUrl;
+    final streamOk = streamUrl != null && await _probeReachable(streamUrl);
+    debugPrint(
+      '[diagnose] song $songId: baseline=$baselineOk streamHost=$streamOk',
+    );
+
+    if (!baselineOk) {
+      showGlobalSnack(
+        'Diagnosis: no usable internet on this network. Playback needs a '
+        'working connection — try mobile data.',
+      );
+      return;
+    }
+    if (!streamOk) {
+      // Internet works, Google's media CDN does not — router firewall,
+      // ISP filtering, or DNS pointing at an unreachable edge node.
+      showGlobalSnack(
+        'Diagnosis: this network reaches the internet, but not YouTube’s '
+        'media servers. Your Wi-Fi router or internet provider may be '
+        'blocking them — try mobile data or another network.',
+      );
+      return;
+    }
+    // Both passed, yet mpv kept failing: small probes succeed while the
+    // sustained connection doesn't — the hallmark of throttled or unstable
+    // Wi-Fi rather than an outright block.
+    showGlobalSnack(
+      'Diagnosis: the song’s server answers a quick test, but streaming '
+      'still failed. This network may be too unstable for streaming — '
+      'try mobile data or another Wi-Fi.',
+    );
+  }
+
+  /// One-shot reachability check for [url]: true when any HTTP response
+  /// arrives within the timeouts — status code irrelevant, since the
+  /// question is whether the TCP/TLS/HTTP path works at all. Logs the host
+  /// and the Dart-level failure type only; the URL is signed, so it never
+  /// goes to a log line.
+  static Future<bool> _probeReachable(String url) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    final host = Uri.tryParse(url)?.host ?? '(unparsable url)';
+    try {
+      final req = await client.getUrl(Uri.parse(url));
+      final resp = await req.close().timeout(const Duration(seconds: 10));
+      debugPrint('[diagnose] $host answered HTTP ${resp.statusCode}');
+      return true;
+    } catch (e) {
+      debugPrint('[diagnose] $host unreachable: ${e.runtimeType}');
+      return false;
+    } finally {
+      client.close(force: true);
     }
   }
 

@@ -281,4 +281,43 @@ void main() {
       );
     });
   });
+
+  group('streamRetryDelay', () {
+    test('doubles exponentially across attempts, no jitter', () {
+      // Base is 1500 ms; jitter 0 scales strictly down by 0.7.
+      expect(
+        PlayerService.streamRetryDelay(1, 0.0),
+        const Duration(milliseconds: 1050),
+      );
+      expect(
+        PlayerService.streamRetryDelay(2, 0.0),
+        const Duration(milliseconds: 2100),
+      );
+      expect(
+        PlayerService.streamRetryDelay(3, 0.0),
+        const Duration(milliseconds: 4200),
+      );
+    });
+
+    test('jitter 1 scales up by 1.3, bounds hold mid-range', () {
+      expect(
+        PlayerService.streamRetryDelay(1, 1.0),
+        const Duration(milliseconds: 1500 * 13 ~/ 10),
+      );
+      // 0.5 is the exact midpoint: factor 1.0 — pure exponential.
+      expect(
+        PlayerService.streamRetryDelay(2, 0.5),
+        const Duration(milliseconds: 3000),
+      );
+    });
+
+    test('delays grow monotonically regardless of jitter extremes', () {
+      // Even fastest attempt 2 (jitter 0) beats slowest attempt 1 (jitter 1):
+      // 3000*0.7 = 2100 > 1500*1.3 = 1950.
+      expect(
+        PlayerService.streamRetryDelay(2, 0.0).inMilliseconds,
+        greaterThan(PlayerService.streamRetryDelay(1, 1.0).inMilliseconds),
+      );
+    });
+  });
 }

@@ -96,16 +96,28 @@ Future<String?> resolveWithRetry(
     List<String>? candidates;
     try {
       candidates = await extract(videoId);
-    } catch (_) {
+    } catch (e) {
       // Extraction failures are reported by StreamResolver.resolve.
+      debugPrint('[resolve] attempt $attempt/$maxAttempts '
+          'extraction threw ${e.runtimeType}');
       return null;
     }
     if (candidates == null || candidates.isEmpty) {
+      debugPrint('[resolve] attempt $attempt/$maxAttempts '
+          'manifest has no streams');
       return null;
     }
-    for (final url in candidates) {
-      if (await probe(url)) {
-        return url;
+    for (var i = 0; i < candidates.length; i++) {
+      final host = Uri.tryParse(candidates[i])?.host ?? '(unparsable)';
+      final live = await probe(candidates[i]);
+      if (!live) {
+        debugPrint(
+            '[resolve] attempt $attempt candidate $i '
+            '($host) dead, trying next');
+      }
+      if (live) {
+        debugPrint('[resolve] attempt $attempt candidate $i ($host) live');
+        return candidates[i];
       }
     }
     if (attempt < maxAttempts - 1) {
@@ -123,11 +135,14 @@ Future<String?> resolveWithRetry(
 /// bounded probe cannot detect the 403 state.
 Future<bool> probeUrl(String url) async {
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  // Host-only logging: credential-adjacent stream args stay out of logs.
+  final host = Uri.tryParse(url)?.host ?? '(unparsable url)';
   try {
     final req = await client.getUrl(Uri.parse(url));
     req.headers.set('range', 'bytes=0-');
     final resp = await req.close().timeout(const Duration(seconds: 15));
     if (resp.statusCode != 200 && resp.statusCode != 206) {
+      debugPrint('[probe] $host answered HTTP ${resp.statusCode} — not live');
       return false;
     }
     var bytes = 0;
@@ -138,7 +153,10 @@ Future<bool> probeUrl(String url) async {
       }
     }
     return true;
-  } catch (_) {
+  } catch (e) {
+    // Evidence of the failure stage on the Dart side (SocketException,
+    // TimeoutException, …). Host only; never the signed URL.
+    debugPrint('[probe] $host unreachable: ${e.runtimeType}');
     return false;
   } finally {
     client.close(force: true);
