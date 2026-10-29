@@ -54,4 +54,37 @@ class Playlist {
       createdAt: createdAt,
     );
   }
+
+  /// Returns a copy with the song at [oldIndex] moved to [newIndex].
+  ///
+  /// Uses list-manipulation semantics (not ReorderableListView's raw drag
+  /// indices): the target index already accounts for the removed item, so
+  /// `reordered(0, 1)` swaps the first two songs.
+  Playlist reordered(int oldIndex, int newIndex) {
+    final songs = List<Song>.from(this.songs);
+    final song = songs.removeAt(oldIndex);
+    songs.insert(newIndex, song);
+    return copyWith(songs: songs);
+  }
+
+  /// Returns a copy with songs sorted by [sort] (case-insensitive).
+  Playlist sorted(PlaylistSort sort) {
+    final songs = List<Song>.from(this.songs)
+      ..sort(
+        (a, b) => switch (sort) {
+          PlaylistSort.title => a.title.toLowerCase(),
+          PlaylistSort.artist => a.artist.toLowerCase(),
+        }
+            .compareTo(
+              switch (sort) {
+                PlaylistSort.title => b.title.toLowerCase(),
+                PlaylistSort.artist => b.artist.toLowerCase(),
+              },
+            ),
+      );
+    return copyWith(songs: songs);
+  }
 }
+
+/// Sort orders for a playlist's song list.
+enum PlaylistSort { title, artist }
