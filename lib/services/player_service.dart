@@ -151,6 +151,21 @@ class PlayerService extends ChangeNotifier {
     });
     engine.stream.error.listen((msg) {
       debugPrint('[mk] error: $msg');
+      final song = currentSong;
+
+      // CDN/network failures on a streamed song are recoverable: re-resolve
+      // the song, which fetches a fresh stream URL — typically from a
+      // different edge node — instead of leaving a dead track.
+      if (song != null &&
+          song.localPath == null &&
+          !_isLocalSource &&
+          isNetworkStreamError(msg)) {
+        _scheduleStreamRetry(song);
+        return;
+      }
+
+      // Everything else keeps the full diagnostics: these are the errors
+      // where the mpv log tail is the only real clue.
       final brief = msg.length > 60 ? '${msg.substring(0, 60)}…' : msg;
       final errs = _mkLogTail.where((e) => e.startsWith('E|')).toList();
       final chosen = errs.isNotEmpty ? errs : _mkLogTail;
@@ -162,9 +177,8 @@ class PlayerService extends ChangeNotifier {
           ? 'Playback error: $brief'
           : 'Playback error: $brief | mpv: $tail';
       showGlobalSnack(full.length > 320 ? '${full.substring(0, 320)}…' : full);
-      final s = currentSong;
-      if (s != null && s.localPath == null && !_isLocalSource) {
-        _tryPlayLocal(s);
+      if (song != null && song.localPath == null && !_isLocalSource) {
+        _tryPlayLocal(song);
       }
     });
     engine.stream.log.listen((l) {
@@ -189,6 +203,8 @@ class PlayerService extends ChangeNotifier {
   }
 
   Future<void> play(Song song) async {
+    // A new manual song supersedes any in-flight stream retry of the old one.
+    _cancelStreamRetry(resetCounters: true);
     final index = _queue.indexWhere((s) => s.id == song.id);
     if (index == -1) {
       // A song outside the current queue starts a fresh individual source:
@@ -245,6 +261,9 @@ class PlayerService extends ChangeNotifier {
       if (_engineUsable) {
         await _engine.open(Media(audioUrl), play: true);
         await _applyRateToEngine();
+        // A clean open means the retry bookkeeping starts fresh.
+        _streamRetryCount = 0;
+        _streamRetrySongId = null;
       }
       StorageService.addRecentPlay(song);
       StorageService.incrementPlayCount(song.id);
@@ -529,6 +548,120 @@ class PlayerService extends ChangeNotifier {
     }
   }
 
+  // --- Stream self-heal -------------------------------------------------
+  //
+  // YouTube stream URLs point at one specific CDN edge node, assigned at
+  // resolve time. When the phone can no longer reach that node mid-song
+  // (node flake, WiFi↔mobile switch), mpv hits connection time-outs instead
+  // of audio. A fresh extraction returns a new URL — usually routed to a
+  // different node — so the failure is recoverable by resolving again.
+
+  /// Recognizes mpv/ffmpeg errors caused by an unreachable or dead network
+  /// stream. These are eligible for the re-resolve retry; anything else
+  /// keeps the full diagnostics path.
+  static bool isNetworkStreamError(String message) {
+    final lowered = message.toLowerCase();
+    const markers = [
+      // ffmpeg tcp layer: 0xffffff92 is -110 (ETIMEDOUT).
+      'connection timed out',
+      'timed out',
+      'time out',
+      '0xffffff92',
+      'connection refused',
+      'connection reset',
+      'no route to host',
+      'could not resolve',
+      'unreachable',
+      // mpv demuxer cache cannot back its stream — the source is dead.
+      'failed to create file cache',
+    ];
+    return markers.any(lowered.contains);
+  }
+
+  static const int _maxStreamRetries = 2;
+  static const Duration _streamRetryBaseDelay = Duration(milliseconds: 1200);
+
+  String? _streamRetrySongId;
+  int _streamRetryCount = 0;
+  Timer? _streamRetryTimer;
+  bool _streamRetryPending = false;
+
+  void _cancelStreamRetry({bool resetCounters = false}) {
+    _streamRetryTimer?.cancel();
+    _streamRetryTimer = null;
+    _streamRetryPending = false;
+    if (resetCounters) {
+      _streamRetryCount = 0;
+      _streamRetrySongId = null;
+    }
+  }
+
+  void _scheduleStreamRetry(Song song) {
+    // First failure of this song resets the steady-state counters.
+    if (_streamRetrySongId != song.id) {
+      _streamRetrySongId = song.id;
+      _streamRetryCount = 0;
+    }
+    // A retry is already ticking down or re-opening the stream.
+    if (_streamRetryPending) return;
+
+    if (_streamRetryCount >= _maxStreamRetries) {
+      _cancelStreamRetry();
+      showGlobalSnack(
+        'Playback failed: the song’s server is unreachable. '
+        'Check your internet connection and try again.',
+      );
+      _tryPlayLocal(song);
+      return;
+    }
+
+    _streamRetryCount++;
+    _streamRetryPending = true;
+    final attempt = _streamRetryCount;
+    showGlobalSnack(
+      'Lost connection to the song’s server — retrying '
+      '($attempt/$_maxStreamRetries)…',
+    );
+    _streamRetryTimer = Timer(
+      _streamRetryBaseDelay * attempt,
+      () => _retryStream(song),
+    );
+  }
+
+  /// Re-resolves and reopens [song] at the position the listener left off.
+  Future<void> _retryStream(Song song) async {
+    _streamRetryTimer = null;
+    try {
+      if (_streamRetryCount == 0 || currentSong?.id != song.id) {
+        return;
+      }
+      final resumePosition = _engine.state.position;
+      final url = await _resolver.resolve(song.id, quality: _audioQuality);
+      if (url == null || currentSong?.id != song.id) {
+        showGlobalSnack(
+          'Playback failed: the song’s server is unreachable. '
+          'Check your internet connection and try again.',
+        );
+        _streamRetryCount = 0;
+        _streamRetrySongId = null;
+        await _tryPlayLocal(song);
+        return;
+      }
+      _mkLogTail.clear();
+      await _engine.open(Media(url), play: true);
+      if (resumePosition > Duration.zero) {
+        await _engine.seek(resumePosition);
+      }
+      await _applyRateToEngine();
+    } catch (e) {
+      debugPrint('[play] stream retry failed: $e');
+      // The next engine error event re-enters _scheduleStreamRetry, which
+      // keeps the attempt counter honest and eventually gives up cleanly.
+    } finally {
+      _streamRetryPending = false;
+    }
+  }
+
   Timer? _sleepTimer;
 
   /// When the sleep timer fires, or null when none is set.
@@ -569,6 +702,7 @@ class PlayerService extends ChangeNotifier {
     if (_engineUsable) {
       await _engine.stop();
     }
+    _cancelStreamRetry(resetCounters: true);
     _currentIndex = -1;
     notifyListeners();
   }

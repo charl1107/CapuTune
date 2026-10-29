@@ -242,4 +242,43 @@ void main() {
 
     expect(secondEnd!.isBefore(firstEnd!), isTrue);
   });
+
+  group('isNetworkStreamError', () {
+    test('recognizes the googlevideo CDN timeout burst', () {
+      const message = 'ffmpeg: tcp: ffurl_read returned 0xffffff92 ~ '
+          'lavf: Failed to create file cache. ~ '
+          'ffmpeg: tcp: Connection to tcp://rr2---sn2-2aqu-hoalr.googlevideo.com:443 failed: Connection time out';
+      expect(PlayerService.isNetworkStreamError(message), isTrue);
+    });
+
+    test('recognizes other reachability failures', () {
+      expect(
+        PlayerService.isNetworkStreamError('tcp: connection refused'),
+        isTrue,
+      );
+      expect(
+        PlayerService.isNetworkStreamError('network is unreachable'),
+        isTrue,
+      );
+      expect(
+        PlayerService.isNetworkStreamError('ffmpeg: could not resolve host'),
+        isTrue,
+      );
+    });
+
+    test('does not claim decoding or local-file errors', () {
+      expect(
+        PlayerService.isNetworkStreamError('Unknown format tag in demuxer'),
+        isFalse,
+      );
+      expect(
+        PlayerService.isNetworkStreamError('ao/wasapi: invalid parameter'),
+        isFalse,
+      );
+      expect(
+        PlayerService.isNetworkStreamError('Requested format not supported'),
+        isFalse,
+      );
+    });
+  });
 }
