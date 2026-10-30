@@ -13,6 +13,13 @@ typedef ProgressCallback = void Function(double progress);
 const Duration _downloadConnectTimeout = Duration(seconds: 15);
 const Duration _downloadSendTimeout = Duration(seconds: 15);
 
+/// Covers the wait for response HEADERS: dio applies receiveTimeout to
+/// `request.close()` (aborting the connection on timeout). Without it, an
+/// origin that accepts TCP but never sends headers would leave `dio.get`
+/// waiting indefinitely — the chunk-idle guard below cannot help because it
+/// only starts once dio.get has returned (i.e. after the headers).
+const Duration _downloadReceiveTimeout = Duration(seconds: 45);
+
 /// No data for this long mid-transfer = connection stalled (the same
 /// sustained-connection failure class seen in streaming). Dio's
 /// receiveTimeout does not apply to streamed responses, so this explicit
@@ -28,7 +35,8 @@ const Duration _downloadChunkIdleTimeout = Duration(seconds: 45);
 Future<void> downloadFile(String url, Song song,
     {ProgressCallback? onProgress,
     CancelToken? cancelToken,
-    Duration? chunkIdleTimeout}) async {
+    Duration? chunkIdleTimeout,
+    Duration? receiveTimeout}) async {
   final dir = await getApplicationDocumentsDirectory();
   final encryptedPath = '${dir.path}/${song.id}.ct';
   final tempFile = File('$encryptedPath.tmp');
@@ -38,18 +46,24 @@ Future<void> downloadFile(String url, Song song,
     BaseOptions(
       connectTimeout: _downloadConnectTimeout,
       sendTimeout: _downloadSendTimeout,
+      receiveTimeout: receiveTimeout ?? _downloadReceiveTimeout,
     ),
   );
-  final response = await dio.get<ResponseBody>(
-    url,
-    options: Options(responseType: ResponseType.stream),
-    cancelToken: cancelToken,
-  );
-
-  final total = response.data?.contentLength ?? -1;
-  var received = 0;
 
   try {
+    // Header-wait guard: dio's receiveTimeout polices the wait for response
+    // headers (it aborts the connection on timeout), so an origin that
+    // accepts TCP but stalls before its first header is cut off too. The
+    // chunk-idle guard below takes over once the body starts.
+    final response = await dio.get<ResponseBody>(
+      url,
+      options: Options(responseType: ResponseType.stream),
+      cancelToken: cancelToken,
+    );
+
+    final total = response.data?.contentLength ?? -1;
+    var received = 0;
+
     // Mid-transfer stall guard: a silent connection aborts the download
     // instead of hanging forever.
     await for (final chunk

@@ -57,11 +57,16 @@ class _TestServer {
 class _FakeResolver extends StreamResolver {
   final Uri url;
 
+  /// Number of times [resolve] was invoked (bounded-retry evidence).
+  int resolveCalls = 0;
+
   _FakeResolver(this.url);
 
   @override
-  Future<String?> resolve(String videoId, {String? quality}) async =>
-      url.toString();
+  Future<String?> resolve(String videoId, {String? quality}) async {
+    resolveCalls++;
+    return url.toString();
+  }
 }
 
 class _FakePathProvider extends PathProviderPlatform {
@@ -279,10 +284,15 @@ void main() {
       // after 300ms instead of the production 45s.
       DownloadService.chunkIdleTimeoutOverride =
           const Duration(milliseconds: 300);
+      // Same for the header-wait test: an origin that never sends headers
+      // aborts after 300ms instead of the production 45s.
+      DownloadService.receiveTimeoutOverride =
+          const Duration(milliseconds: 300);
     });
 
     tearDown(() {
       DownloadService.chunkIdleTimeoutOverride = null;
+      DownloadService.receiveTimeoutOverride = null;
     });
 
     test(
@@ -380,6 +390,81 @@ void main() {
       // Failure report, not a successful partial.
       expect(service.errorMessage, isNotNull);
       expect(service.errorMessage, isNot('Download cancelled'));
+      final docs = await _documents();
+      expect(File('${docs.path}/${song.id}.ct').existsSync(), isFalse);
+      expect(File('${docs.path}/${song.id}.ct.tmp').existsSync(), isFalse);
+
+      await server.close();
+    });
+
+    test(
+        'an origin that never sends headers aborts via the receive timeout '
+        'with a bounded retry and no .ct residue', () async {
+      // Accepts the request and holds the socket open, but never writes a
+      // single header byte — the exact production gap this closes (dio.get
+      // would otherwise wait forever).
+      final server = await _TestServer.serve((request) async {
+        await request.drain<void>().catchError((Object _) {});
+        await Completer<void>().future;
+      });
+
+      final resolver = _FakeResolver(server.url);
+      final service = DownloadService(resolver: resolver);
+      final song = _song('headerless1');
+      await service.downloadSong(song);
+
+      // Terminated by the receive timeout into a clean failure state
+      // (not 'cancelled', not downloaded).
+      expect(service.getState(song.id), DownloadState.idle);
+      expect(service.errorMessage, isNot('Download cancelled'));
+      expect(service.errorMessage, contains('Download failed'));
+      expect(service.errorMessage, contains('[receive timeout]'),
+          reason: 'the receive timeout is the failure mechanism');
+
+      // The retry ladder stayed strictly bounded: one attempt plus one
+      // fresh-URL retry, never a third network attempt.
+      expect(resolver.resolveCalls, DownloadService.maxDownloadAttempts);
+
+      // Nothing registered, nothing left anywhere on disk.
+      expect(StorageService.isDownloaded(song.id), isFalse);
+      final docs = await _documents();
+      expect(File('${docs.path}/${song.id}.ct').existsSync(), isFalse);
+      expect(File('${docs.path}/${song.id}.ct.tmp').existsSync(), isFalse);
+
+      await server.close();
+    });
+
+    test(
+        'cancellation wins during the header wait: idle, no residue, no '
+        'second network attempt', () async {
+      final server = await _TestServer.serve((request) async {
+        await request.drain<void>().catchError((Object _) {});
+        await Completer<void>().future;
+      });
+
+      final resolver = _FakeResolver(server.url);
+      final service = DownloadService(resolver: resolver);
+      final song = _song('headerless2');
+      final started = service.downloadSong(song);
+
+      // Cancel while the client is still inside the header wait (before the
+      // 300ms receive timeout can fire instead).
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (service.getState(song.id) != DownloadState.downloading) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('download never entered the downloading state');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      await service.cancelDownload(song.id);
+      await started;
+
+      expect(service.getState(song.id), DownloadState.idle);
+      expect(service.errorMessage, 'Download cancelled');
+      // Cancellation is terminal: no retry fired via the timeout path.
+      expect(resolver.resolveCalls, 1, reason: 'cancel must pre-empt retry');
+      // No download ever materialised anywhere.
+      expect(StorageService.isDownloaded(song.id), isFalse);
       final docs = await _documents();
       expect(File('${docs.path}/${song.id}.ct').existsSync(), isFalse);
       expect(File('${docs.path}/${song.id}.ct.tmp').existsSync(), isFalse);

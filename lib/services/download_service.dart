@@ -89,6 +89,12 @@ class DownloadService extends ChangeNotifier {
   @visibleForTesting
   static Duration? chunkIdleTimeoutOverride;
 
+  /// Test hook: shrinks the header-wait receive timeout for one run so the
+  /// never-sends-headers test doesn't wait the production 45 s. Null in
+  /// production.
+  @visibleForTesting
+  static Duration? receiveTimeoutOverride;
+
   DownloadState getState(String songId) =>
       _states[songId] ??
       (StorageService.isDownloaded(songId)
@@ -145,6 +151,7 @@ class DownloadService extends ChangeNotifier {
             },
             cancelToken: cancelToken,
             chunkIdleTimeout: chunkIdleTimeoutOverride,
+            receiveTimeout: receiveTimeoutOverride,
           );
 
           _states[song.id] = DownloadState.downloaded;

@@ -5,7 +5,9 @@ typedef ProgressCallback = void Function(double progress);
 Future<void> downloadFile(String url, Song song,
     {ProgressCallback? onProgress,
     dynamic cancelToken,
-    Duration? chunkIdleTimeout}) async {
+    Duration? chunkIdleTimeout,
+    // Signature parity with download_service_mobile.dart.
+    Duration? receiveTimeout}) async {
   throw Exception('Downloads are not supported on web yet');
 }
 

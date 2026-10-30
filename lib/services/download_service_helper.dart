@@ -15,7 +15,10 @@ Future<int> cleanupStaleTmp({
 Future<void> downloadFile(String url, Song song,
     {ProgressCallback? onProgress,
     dynamic cancelToken,
-    Duration? chunkIdleTimeout}) async {
+    Duration? chunkIdleTimeout,
+    // Signature parity with download_service_mobile.dart; the portable
+    // backstop target of the conditional import adds no timeout machinery.
+    Duration? receiveTimeout}) async {
   final dir = await getApplicationDocumentsDirectory();
   final filePath = '${dir.path}/${song.id}.mp3';
   final file = File(filePath);
