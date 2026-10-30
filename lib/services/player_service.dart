@@ -252,8 +252,10 @@ class PlayerService extends ChangeNotifier {
       final audioUrl = await _resolver.resolve(song.id, quality: _audioQuality);
       if (audioUrl == null) {
         debugPrint('[play] resolve returned null for ${song.id}');
-        showGlobalSnack(
-            'Stream extraction failed - YouTube gave no audio for this song');
+        // Distinguish offline from a genuine extraction failure with the
+        // same baseline probe the retry give-up uses; never tell an offline
+        // user that "YouTube gave no audio".
+        unawaited(_explainResolutionFailure(song.id));
         return;
       }
       debugPrint('[play] resolve OK for ${song.id}, loading into media_kit');
@@ -691,6 +693,36 @@ class PlayerService extends ChangeNotifier {
     } finally {
       _streamRetryPending = false;
     }
+  }
+
+  // --- Resolution failure explanation -------------------------------------
+  //
+  // A null from resolve() has two very different causes: no usable network
+  // (nothing to explain about the song) or a genuine extraction problem.
+  // The old one-size message claimed "YouTube gave no audio" even when the
+  // device was offline — now the baseline probe picks the right story.
+
+  /// User-facing message for a failed stream resolution.
+  /// [networkReachable] is the baseline connectivity result. Kept pure so
+  /// tests can pin both branches without any networking.
+  @visibleForTesting
+  static String resolutionFailureMessage({required bool networkReachable}) {
+    if (!networkReachable) {
+      return 'No usable internet on this network. Streaming is unavailable — '
+          'downloaded songs still play.';
+    }
+    return 'Stream extraction failed - YouTube gave no audio for this song';
+  }
+
+  /// Explains a resolve-null result: one baseline connectivity probe, then
+  /// the accurate message. Fire-and-forget; never blocks playback UI.
+  Future<void> _explainResolutionFailure(String songId) async {
+    final networkReachable = await _probeReachable(_connectivityCheckUrl);
+    debugPrint(
+        '[play] resolve failed for $songId: baseline=$networkReachable');
+    showGlobalSnack(
+      resolutionFailureMessage(networkReachable: networkReachable),
+    );
   }
 
   // --- Differential network diagnosis -------------------------------------

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
@@ -21,6 +22,12 @@ void main() async {
   MediaKit.ensureInitialized();
   await Hive.initFlutter();
   await StorageService.init();
+
+  // Startup housekeeping: remove download staging files left by killed
+  // sessions. Uses the same DownloadService instance that tracks active
+  // downloads, so an in-progress write is never touched. No-op on web.
+  final downloadService = DownloadService();
+  unawaited(downloadService.cleanupStaleTempFiles());
 
   // Playback diagnostics: route youtube_explode's internal logs (which client
   // failed and why) into the debug console instead of swallowing them.
@@ -66,7 +73,7 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: playerService),
-        ChangeNotifierProvider(create: (_) => DownloadService()),
+        ChangeNotifierProvider.value(value: downloadService),
         ChangeNotifierProvider(create: (_) => ThemeService()),
         ChangeNotifierProvider.value(value: updateService),
       ],

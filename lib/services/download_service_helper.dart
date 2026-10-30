@@ -6,8 +6,16 @@ import '../models/song.dart';
 
 typedef ProgressCallback = void Function(double progress);
 
+Future<int> cleanupStaleTmp({
+  Directory? directory,
+  Set<String> activeIds = const <String>{},
+  Duration maxAge = const Duration(hours: 24),
+}) async => 0;
+
 Future<void> downloadFile(String url, Song song,
-    {ProgressCallback? onProgress, dynamic cancelToken}) async {
+    {ProgressCallback? onProgress,
+    dynamic cancelToken,
+    Duration? chunkIdleTimeout}) async {
   final dir = await getApplicationDocumentsDirectory();
   final filePath = '${dir.path}/${song.id}.mp3';
   final file = File(filePath);

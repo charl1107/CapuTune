@@ -282,6 +282,25 @@ void main() {
     });
   });
 
+  group('resolutionFailureMessage', () {
+    test('an unreachable network must never be blamed on extraction', () {
+      final message = PlayerService.resolutionFailureMessage(
+        networkReachable: false,
+      );
+      expect(message, contains('internet'));
+      expect(message, isNot(contains('YouTub')));
+      expect(message, isNot(contains('audio')));
+    });
+
+    test('a reachable network keeps the genuine extraction message', () {
+      final message = PlayerService.resolutionFailureMessage(
+        networkReachable: true,
+      );
+      expect(message, contains('YouTub'));
+      expect(message, contains('no audio'));
+    });
+  });
+
   group('streamRetryDelay', () {
     test('doubles exponentially across attempts, no jitter', () {
       // Base is 1500 ms; jitter 0 scales strictly down by 0.7.

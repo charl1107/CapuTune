@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -6,6 +7,18 @@ import 'cipher_service.dart';
 
 typedef ProgressCallback = void Function(double progress);
 
+/// Bounded network constants for downloads. Keep them modest: a download
+/// that can't make progress should fail fast so the retry ladder (one
+/// fresh-URL retry in DownloadService) can take over with a new node.
+const Duration _downloadConnectTimeout = Duration(seconds: 15);
+const Duration _downloadSendTimeout = Duration(seconds: 15);
+
+/// No data for this long mid-transfer = connection stalled (the same
+/// sustained-connection failure class seen in streaming). Dio's
+/// receiveTimeout does not apply to streamed responses, so this explicit
+/// chunk-idle timeout is what detects a dead transfer.
+const Duration _downloadChunkIdleTimeout = Duration(seconds: 45);
+
 /// Downloads audio from [url] and stores it encrypted (.ct) inside the app's
 /// private sandbox directory. When the app is uninstalled, the OS automatically
 /// wipes this directory completely.
@@ -13,13 +26,20 @@ typedef ProgressCallback = void Function(double progress);
 /// No storage permission is required: the app's private documents directory
 /// is always writable without runtime permissions.
 Future<void> downloadFile(String url, Song song,
-    {ProgressCallback? onProgress, CancelToken? cancelToken}) async {
+    {ProgressCallback? onProgress,
+    CancelToken? cancelToken,
+    Duration? chunkIdleTimeout}) async {
   final dir = await getApplicationDocumentsDirectory();
   final encryptedPath = '${dir.path}/${song.id}.ct';
   final tempFile = File('$encryptedPath.tmp');
   final sink = tempFile.openWrite();
 
-  final dio = Dio();
+  final dio = Dio(
+    BaseOptions(
+      connectTimeout: _downloadConnectTimeout,
+      sendTimeout: _downloadSendTimeout,
+    ),
+  );
   final response = await dio.get<ResponseBody>(
     url,
     options: Options(responseType: ResponseType.stream),
@@ -30,7 +50,10 @@ Future<void> downloadFile(String url, Song song,
   var received = 0;
 
   try {
-    await for (final chunk in response.data!.stream) {
+    // Mid-transfer stall guard: a silent connection aborts the download
+    // instead of hanging forever.
+    await for (final chunk
+        in response.data!.stream.timeout(chunkIdleTimeout ?? _downloadChunkIdleTimeout)) {
       if (cancelToken?.isCancelled ?? false) {
         throw DioException(
           requestOptions: RequestOptions(path: url),
@@ -76,6 +99,49 @@ Future<void> deleteFile(String songId) async {
     }
   } catch (e) {
     // Ignore deletion errors
+  }
+}
+
+/// Startup housekeeping: deletes stale `*.ct.tmp` staging files left behind
+/// when the app was killed mid-download.
+///
+/// Safety rails:
+/// - Only files literally named `<id>.ct.tmp` qualify — completed `.ct`
+///   files, legacy `.mp3` files and the `local_music/` directory are never
+///   considered (directories are skipped entirely).
+/// - Files whose id belongs to an active download ([activeIds]) are untouched.
+/// - Files younger than [maxAge] are presumed current and left alone.
+/// - Any FS error is swallowed: housekeeping must never fail startup or
+///   touch data it cannot inspect.
+///
+/// Returns the number of files removed (0 on any failure).
+Future<int> cleanupStaleTmp({
+  Directory? directory,
+  Set<String> activeIds = const <String>{},
+  Duration maxAge = const Duration(hours: 24),
+}) async {
+  try {
+    final dir = directory ?? await getApplicationDocumentsDirectory();
+    var removed = 0;
+    for (final entry in dir.listSync(followLinks: false)) {
+      if (entry is! File) continue;
+      final name = entry.uri.pathSegments.last;
+      const suffix = '.ct.tmp';
+      if (!name.endsWith(suffix) || name.length <= suffix.length) continue;
+      final songId = name.substring(0, name.length - suffix.length);
+      if (activeIds.contains(songId)) continue;
+      try {
+        final modified = await entry.lastModified();
+        if (DateTime.now().difference(modified) < maxAge) continue;
+        await entry.delete();
+        removed++;
+      } catch (_) {
+        // Cannot stat or delete this entry — leave it; best effort only.
+      }
+    }
+    return removed;
+  } catch (_) {
+    return 0;
   }
 }
 
