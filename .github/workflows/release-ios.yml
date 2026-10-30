@@ -73,7 +73,8 @@ jobs:
             exit 1
           fi
           build=$((build + 1))
-          sed -i "s/^version:.*/version: $version+$build/" pubspec.yaml
+          # BSD sed (macOS) needs an explicit empty backup suffix for -i.
+          sed -i '' -e "s/^version:.*/version: $version+$build/" pubspec.yaml
           {
             echo "version=$version"
             echo "build=$build"
