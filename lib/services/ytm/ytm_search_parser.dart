@@ -12,14 +12,19 @@
 // unit-tested and smoke-tested without a widget environment.
 library;
 
+import '../../utils/search_ranking.dart' show RankableTrack;
+
 /// One song-shaped search result, before mapping onto the app's [Song] model.
 ///
 /// Parsed defensively: every field except [id] and [title] may be null when
 /// the response omits it.
-class YtmSongResult {
+class YtmSongResult implements RankableTrack {
   final String id;
+  @override
   final String title;
+  @override
   final String artist;
+  @override
   final String? album;
   final String? duration;
   final String? thumbnailUrl;
@@ -32,6 +37,18 @@ class YtmSongResult {
     this.duration,
     this.thumbnailUrl,
   });
+}
+
+/// One parsed search suggestion: the suggested query text and the span
+/// that should be highlighted (null = whole suggestion).
+class YtmSearchSuggestion {
+  final String text;
+
+  /// The substring of [text] YTM marks as the typed part, or null when the
+  /// response carries no explicit highlight.
+  final String? highlight;
+
+  const YtmSearchSuggestion({required this.text, this.highlight});
 }
 
 /// Reads `path` out of a decoded Innertube response, returning null as soon
@@ -166,6 +183,44 @@ YtmSongResult? _parseSongItem(Map item) {
   );
 }
 
+/// Extracts query suggestions from `music/get_search_suggestions`
+/// responses. Returns `[]` for any malformed shape; only rows with
+/// non-empty suggestion text are kept.
+List<YtmSearchSuggestion> parseYtmSearchSuggestions(dynamic decoded) {
+  final contents = nav(decoded, ['contents']);
+  if (contents is! List) return [];
+  final out = <YtmSearchSuggestion>[];
+  for (final entry in contents) {
+    final renderer = entry is Map ? entry['searchSuggestionRenderer'] : null;
+    if (renderer is! Map) continue;
+    final suggestion = renderer['suggestion'];
+    if (suggestion is! Map) continue;
+    final runs = suggestion['runs'];
+    String? text;
+    String? highlight;
+    if (runs is List) {
+      final buffer = StringBuffer();
+      final highlightBuffer = StringBuffer();
+      for (final run in runs) {
+        if (run is! Map) continue;
+        final t = run['text'];
+        if (t is! String) continue;
+        buffer.write(t);
+        if (run['bold'] == true) highlightBuffer.write(t);
+      }
+      text = buffer.toString();
+      if (highlightBuffer.isNotEmpty) highlight = highlightBuffer.toString();
+    } else if (suggestion['text'] is String) {
+      text = suggestion['text'] as String;
+    }
+    if (text == null || text.trim().isEmpty) continue;
+    out.add(
+      YtmSearchSuggestion(text: text.trim(), highlight: highlight?.trim()),
+    );
+  }
+  return out;
+}
+
 /// First run text of flex column [index]; null when absent or empty.
 String? _firstRunText(dynamic column) {
   final runs = _columnRuns(column);
@@ -267,3 +322,149 @@ String? _bestThumbnailUrl(dynamic thumbnail) {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Song radio (`youtubei/v1/next` with playlistId RD<videoId>)
+// ---------------------------------------------------------------------------
+
+/// Navigational path to the radio queue rows.
+const List<String> _radioQueuePath = [
+  'contents',
+  'singleColumnMusicWatchNextResultsRenderer',
+  'tabbedRenderer',
+  'watchNextTabbedResultsRenderer',
+  'tabs',
+];
+
+/// Parses a song-radio `next` response into queue rows, seed song included.
+///
+/// The queue lives in the first (watch-next) tab's `musicQueueRenderer`;
+/// the "Related" tab is frequently empty in these responses and is not
+/// consulted. Rows arrive as `playlistPanelVideoRenderer` maps, which carry
+/// the same run structure the search parser already reads, so artist/album/
+/// duration extraction is delegated to [_parseSongRuns]. Returns `[]` for
+/// any malformed shape, including the "shell" response an invalid videoId
+/// produces (no `musicQueueRenderer.content` at all).
+List<YtmSongResult> parseYtmRadioSongs(dynamic decoded) {
+  final tabs = nav(decoded, _radioQueuePath);
+  if (tabs is! List) return [];
+  for (final tab in tabs) {
+    final content = nav(tab, [
+      'tabRenderer',
+      'content',
+      'musicQueueRenderer',
+      'content',
+      'playlistPanelRenderer',
+      'contents',
+    ]);
+    if (content is! List) continue;
+    final results = <YtmSongResult>[];
+    for (final row in content) {
+      final renderer = row is Map ? row['playlistPanelVideoRenderer'] : null;
+      if (renderer is! Map) continue;
+      final song = _parseRadioRow(renderer);
+      if (song != null) results.add(song);
+    }
+    // The watch-next tab is the first one carrying a queue; once found and
+    // parsed, later tabs (Related etc.) are irrelevant.
+    return results;
+  }
+  return [];
+}
+
+/// Parses one `playlistPanelVideoRenderer` into a [YtmSongResult], or null
+/// when the row lacks an id or title (ads, uninitialized placeholders).
+YtmSongResult? _parseRadioRow(Map renderer) {
+  final videoId = renderer['videoId'];
+  if (videoId is! String || videoId.isEmpty) return null;
+
+  final titleMap = renderer['title'];
+  String? title;
+  if (titleMap is Map) {
+    for (final run in _runsOf(titleMap)) {
+      final text = run is Map ? run['text'] : null;
+      if (text is String && text.isNotEmpty) {
+        title = text;
+        break;
+      }
+    }
+  }
+  if (title == null || title.isEmpty) return null;
+
+  String? artist;
+  String? album;
+  String? duration;
+  final byline = renderer['longBylineText'];
+  if (byline is Map) {
+    final parsed = _parseRadioByline(_runsOf(byline));
+    final artists = parsed['artists'];
+    artist = artists is List && artists.isNotEmpty ? artists.join(', ') : null;
+    album = parsed['album'] as String?;
+    duration = parsed['duration'] as String?;
+  }
+  // Radio rows carry the duration in a dedicated `lengthText` field rather
+  // than inside the byline.
+  if (duration == null) {
+    final lengthText = renderer['lengthText'];
+    if (lengthText is Map) {
+      for (final run in _runsOf(lengthText)) {
+        final text = run is Map ? run['text'] : null;
+        if (text is String && text.isNotEmpty) {
+          duration = text;
+          break;
+        }
+      }
+    }
+  }
+
+  return YtmSongResult(
+    id: videoId,
+    title: title,
+    artist: artist ?? '',
+    album: album,
+    duration: duration,
+    thumbnailUrl: _bestThumbnailUrl(renderer['thumbnail']),
+  );
+}
+
+/// The text runs of any `{runs: [...]}` map (title, byline), or `[]`.
+List<dynamic> _runsOf(Map textMap) {
+  final runs = textMap['runs'];
+  return runs is List ? runs : [];
+}
+
+/// Parses the `longBylineText` runs of a radio row: "artist • album • 4:19"
+/// (often with a bare 4-digit year between album and duration) with artists
+/// linked (carrying a navigationEndpoint) and everything else classified
+/// like search rows. Unlike search bylines, radio bylines have no leading
+/// "Song" type specifier, so the shared search-runs parser would drop the
+/// first artist — hence this dedicated walker.
+Map<String, Object?> _parseRadioByline(List runs) {
+  final artists = <String>[];
+  String? album;
+  String? duration;
+  for (final run in runs) {
+    if (run is! Map) continue;
+    final (kind, name, _) = _classifyRun(run);
+    switch (kind) {
+      case 'album':
+        album = name;
+      case 'artist':
+        // Separator runs (" • ") fall through _classifyRun to the artist
+        // fallback; a bare separator text is never a name. Bare 4-digit
+        // runs are release years, not artist names.
+        final text = run['text'];
+        if (name != null &&
+            text != _dotSeparator &&
+            !_yearPattern.hasMatch(name)) {
+          artists.add(name);
+        }
+      case 'duration':
+        duration = name;
+    }
+  }
+  return {'artists': artists, 'album': album, 'duration': duration};
+}
+
+/// Bare 4-digit release years in radio bylines (" • 1991 • ").
+final RegExp _yearPattern = RegExp(r'^\d{4}$');

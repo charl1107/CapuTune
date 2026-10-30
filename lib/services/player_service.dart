@@ -19,6 +19,7 @@ typedef SimilarSongsResolver = Future<List<Song>> Function({
   required Song seed,
   required Set<String> excludedIds,
   required int limit,
+  List<Song> recentlyPlayed,
 });
 
 class PlayerService extends ChangeNotifier {
@@ -351,6 +352,8 @@ class PlayerService extends ChangeNotifier {
         seed: seedSong,
         excludedIds: excluded,
         limit: 10,
+        // Don't refill the queue with songs heard moments ago.
+        recentlyPlayed: StorageService.getRecentPlays().take(15).toList(),
       );
       if (!_radioAutoplay || currentSong?.id != seedSong.id || _isPlaylistSource) {
         return;
@@ -458,6 +461,8 @@ class PlayerService extends ChangeNotifier {
             seed: seed,
             excludedIds: excluded,
             limit: 5,
+            // Don't loop the queue back into songs heard moments ago.
+            recentlyPlayed: StorageService.getRecentPlays().take(15).toList(),
           );
           if (recommendations.isNotEmpty && _radioAutoplay) {
             // Recommendations are appended as a clearly separated tail; the
@@ -496,15 +501,22 @@ class PlayerService extends ChangeNotifier {
     required Song seed,
     required Set<String> excludedIds,
     required int limit,
+    List<Song> recentlyPlayed = const [],
   }) {
     final resolver = _similarSongsResolver;
     if (resolver != null) {
-      return resolver(seed: seed, excludedIds: excludedIds, limit: limit);
+      return resolver(
+        seed: seed,
+        excludedIds: excludedIds,
+        limit: limit,
+        recentlyPlayed: recentlyPlayed,
+      );
     }
     return RecommendationService.findSimilarSongs(
       seed: seed,
       excludedIds: excludedIds,
       limit: limit,
+      recentlyPlayed: recentlyPlayed,
     );
   }
 

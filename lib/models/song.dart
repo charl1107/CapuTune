@@ -1,7 +1,12 @@
-class Song {
+import '../utils/search_ranking.dart' show RankableTrack;
+
+class Song implements RankableTrack {
   final String id;
+  @override
   final String title;
+  @override
   final String artist;
+  @override
   final String? album;
   final String? thumbnail;
   final String? duration;

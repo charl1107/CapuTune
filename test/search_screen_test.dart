@@ -57,6 +57,11 @@ class _FakeSearch {
   void respond(String query, List<Song> results) {
     _pending.remove(query)!.complete(results);
   }
+
+  /// Queries with an unanswered request, in fire order.
+  List<String> get pendingQueries => _pending.keys
+      .where((q) => !_pending[q]!.isCompleted)
+      .toList(growable: false);
 }
 
 Future<Directory> _initStorage(WidgetTester tester) async {
@@ -119,15 +124,17 @@ void main() {
     GoogleFonts.config.allowRuntimeFetching = false;
   });
 
-  testWidgets('results appear immediately on the first keystroke (no debounce)',
-      (tester) async {
+  testWidgets('results appear after the debounce settles', (tester) async {
     final search = _FakeSearch();
     final tempDir = await _initStorage(tester);
     addTearDown(() => tempDir.deleteSync(recursive: true));
     await _pumpScreen(tester, search: search);
 
     await tester.enterText(find.byType(TextField), 'lofi');
-    await tester.pump(); // one frame only — a debounce would not have fired
+    // Before the debounce elapses no request may have been issued.
+    expect(search.pendingQueries, isEmpty);
+    await tester.pump(SearchScreen.searchDebounce);
+    expect(search.pendingQueries, ['lofi']);
 
     search.respond('lofi', [_song('1')]);
     await tester.pump();
@@ -138,6 +145,28 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
+  testWidgets('rapid typing batches into the newest query only',
+      (tester) async {
+    final search = _FakeSearch();
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester, search: search);
+
+    await tester.enterText(find.byType(TextField), 'l');
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.enterText(find.byType(TextField), 'lof');
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.enterText(find.byType(TextField), 'lofi');
+    // Only the settled query fires; the intermediates were debounce-dropped.
+    await tester.pump(SearchScreen.searchDebounce);
+    expect(search.pendingQueries, ['lofi']);
+
+    search.respond('lofi', [_song('1')]);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Song 1'), findsOneWidget);
+  });
+
   testWidgets('results follow the newest query while typing', (tester) async {
     final search = _FakeSearch();
     final tempDir = await _initStorage(tester);
@@ -145,7 +174,7 @@ void main() {
     await _pumpScreen(tester, search: search);
 
     await tester.enterText(find.byType(TextField), 'lofi');
-    await tester.pump();
+    await tester.pump(SearchScreen.searchDebounce);
     search.respond('lofi', [_song('1')]);
     await tester.pump();
     await tester.pump();
@@ -153,7 +182,7 @@ void main() {
 
     // Keep typing: the query changes and the results must follow.
     await tester.enterText(find.byType(TextField), 'lofi beats');
-    await tester.pump();
+    await tester.pump(SearchScreen.searchDebounce);
     search.respond('lofi beats', [_song('2')]);
     await tester.pump();
     await tester.pump();
@@ -170,10 +199,10 @@ void main() {
 
     // First query, response held back (slow network).
     await tester.enterText(find.byType(TextField), 'slow');
-    await tester.pump();
+    await tester.pump(SearchScreen.searchDebounce);
     // Second query arrives and answers first (fast network).
     await tester.enterText(find.byType(TextField), 'fast');
-    await tester.pump();
+    await tester.pump(SearchScreen.searchDebounce);
     search.respond('fast', [_song('fast-song')]);
     await tester.pump();
     await tester.pump();
@@ -195,7 +224,7 @@ void main() {
     await _pumpScreen(tester, search: search);
 
     await tester.enterText(find.byType(TextField), 'jazz');
-    await tester.pump();
+    await tester.pump(SearchScreen.searchDebounce);
     // Clear before the response arrives.
     await tester.tap(find.byIcon(Icons.clear));
     await tester.pump();

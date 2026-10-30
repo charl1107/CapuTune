@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/discovery_service.dart';
@@ -14,6 +16,11 @@ class SearchScreen extends StatefulWidget {
   /// without network access.
   final Future<List<Song>> Function(String query)? searchRemote;
 
+  /// Interval between the last keystroke and the fired search. Exposed for
+  /// tests so they pump exactly to (and never past) the debounce boundary.
+  @visibleForTesting
+  static Duration get searchDebounce => _SearchScreenState._searchDebounce;
+
   @override
   State<SearchScreen> createState() => _SearchScreenState();
 }
@@ -26,6 +33,12 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _hasSearched = false;
   List<String> _recentSearches = [];
   List<Song> _suggestedSongs = [];
+
+  /// Interval between the last keystroke and the fired search. Long enough
+  /// to batch real typing, short enough to feel instant.
+  static const Duration _searchDebounce = Duration(milliseconds: 350);
+
+  Timer? _debounceTimer;
 
   /// Monotonic id of the newest search request. Because search is fired on
   /// every keystroke with no debounce, responses race; a response whose id is
@@ -45,6 +58,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -62,6 +76,7 @@ class _SearchScreenState extends State<SearchScreen> {
     final query = _controller.text.trim();
     final seq = ++_searchSeq;
     if (query.isEmpty) {
+      _debounceTimer?.cancel();
       setState(() {
         _results = [];
         _hasSearched = false;
@@ -95,7 +110,11 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   void _onSearchChanged(String query) {
-    _search();
+    // Debounce: batch keystrokes into one request after typing settles, so
+    // "metallica" costs one round-trip instead of nine. The sequence guard
+    // inside _search still protects against stragglers from earlier timers.
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(_searchDebounce, () => _search());
   }
 
   void _submitSearch(String query) {

@@ -16,8 +16,8 @@ import 'dart:io';
 import 'ytm_search_parser.dart';
 
 /// Re-exported so callers of [YtmSearchClient] (and its tests) can name the
-/// result type without importing the parser directly.
-export 'ytm_search_parser.dart' show YtmSongResult;
+/// result types without importing the parser directly.
+export 'ytm_search_parser.dart' show YtmSongResult, YtmSearchSuggestion;
 
 /// Where the request goes.
 const String kYtmSearchUrl =
@@ -32,7 +32,7 @@ const String kYtmSongsParams = 'EgWKAQIIAWoMEA4QChADEAQQCRAF';
 
 /// Browser-like user agent, matching what ytmusicapi sends. No cookies,
 /// credentials, or user-specific headers are ever attached.
-const String _kUserAgent =
+const String kYtmUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0';
 
 /// Signature of the injectable transport: POSTs [body] to [url] and returns
@@ -60,6 +60,51 @@ class YtmSearchClient {
   /// `DiscoveryService`'s bounded-request contract.
   final Duration timeout;
 
+  /// Where the request goes for query suggestions.
+  static const String kYtmSuggestionsUrl =
+      'https://music.youtube.com/youtubei/v1/music/get_search_suggestions'
+      '?alt=json';
+
+  /// Asks YTM for query completions of [input] ("metal" → "metallica",
+  /// "metallica songs", ...). Never throws: every failure degrades to `[]`,
+  /// matching the client's other request paths.
+  Future<List<YtmSearchSuggestion>> searchSuggestions(String input) async {
+    final trimmed = input.trim();
+    if (trimmed.isEmpty) return [];
+    try {
+      final body = buildSuggestionRequestBody(trimmed);
+      final fetch = _injectedFetch;
+      final decoded = fetch != null
+          ? await fetch(kYtmSuggestionsUrl, body)
+          : await _post(kYtmSuggestionsUrl, body);
+      return parseYtmSearchSuggestions(decoded);
+    } on TimeoutException {
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// The POST body the suggestions request sends, exposed for tests.
+  Map<String, dynamic> buildSuggestionRequestBody(String input) {
+    final now = DateTime.now().toUtc();
+    final stamp =
+        '${now.year.toString().padLeft(4, '0')}${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}';
+    return {
+      'context': {
+        'client': {
+          'clientName': _kClientName,
+          'clientVersion': '1.$stamp.01.00',
+          'hl': 'en',
+          'gl': 'US',
+        },
+        'user': <String, dynamic>{},
+      },
+      'input': input,
+    };
+  }
+
   /// Searches the YouTube Music catalog (songs filter) for [query].
   ///
   /// Empty or blank queries short-circuit to `[]` without any request.
@@ -70,7 +115,9 @@ class YtmSearchClient {
       final body = buildRequestBody(trimmed);
       final fetch = _injectedFetch;
       final decoded =
-          fetch != null ? await fetch(kYtmSearchUrl, body) : await _post(body);
+          fetch != null
+              ? await fetch(kYtmSearchUrl, body)
+              : await _post(kYtmSearchUrl, body);
       return parseYtmSongs(decoded);
     } on TimeoutException {
       return [];
@@ -105,17 +152,18 @@ class YtmSearchClient {
   /// The client is created per request and force-closed afterwards rather
   /// than kept alive: searches are user-paced (one per keystroke at most),
   /// so connection reuse buys nothing worth the leak risk.
-  Future<dynamic> _post(Map<String, dynamic> body) async {
+  Future<dynamic> _post(String url, Map<String, dynamic> body) async {
     final client = HttpClient();
     try {
       client.autoUncompress = true;
       client.connectionTimeout = timeout;
-      final request = await client.postUrl(Uri.parse(kYtmSearchUrl)).timeout(
-          timeout,
-          onTimeout: () => throw TimeoutException('ytm search connect'));
+      final request =
+          await client.postUrl(Uri.parse(url)).timeout(
+              timeout,
+              onTimeout: () => throw TimeoutException('ytm search connect'));
       request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
       request.headers.set('origin', 'https://music.youtube.com');
-      request.headers.set(HttpHeaders.userAgentHeader, _kUserAgent);
+      request.headers.set(HttpHeaders.userAgentHeader, kYtmUserAgent);
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'gzip');
       request.add(utf8.encode(jsonEncode(body)));
       final response = await request.close().timeout(timeout);

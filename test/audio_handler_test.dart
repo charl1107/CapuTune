@@ -49,7 +49,7 @@ void main() {
   test('CapuTuneAudioHandler synchronizes mediaItem when song starts', () async {
     final player = PlayerService(
       resolver: _FakeStreamResolver(),
-      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+      similarSongsResolver: ({required seed, required excludedIds, required limit, recentlyPlayed = const <Song>[]}) async => [],
     );
 
     final handler = CapuTuneAudioHandler(player);
@@ -75,7 +75,7 @@ void main() {
   test('CapuTuneAudioHandler reports the configured playback rate', () async {
     final player = PlayerService(
       resolver: _FakeStreamResolver(),
-      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+      similarSongsResolver: ({required seed, required excludedIds, required limit, recentlyPlayed = const <Song>[]}) async => [],
     );
 
     final handler = CapuTuneAudioHandler(player);
@@ -96,7 +96,7 @@ void main() {
   test('CapuTuneAudioHandler exposes system actions and transport controls', () async {
     final player = PlayerService(
       resolver: _FakeStreamResolver(),
-      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+      similarSongsResolver: ({required seed, required excludedIds, required limit, recentlyPlayed = const <Song>[]}) async => [],
     );
 
     final handler = CapuTuneAudioHandler(player);
@@ -136,7 +136,7 @@ void main() {
       () async {
     final player = PlayerService(
       resolver: _FakeStreamResolver(),
-      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+      similarSongsResolver: ({required seed, required excludedIds, required limit, recentlyPlayed = const <Song>[]}) async => [],
     );
 
     final handler = CapuTuneAudioHandler(player);
@@ -174,7 +174,7 @@ void main() {
   test('Play and Pause from the session reflect real playback state', () async {
     final player = PlayerService(
       resolver: _FakeStreamResolver(),
-      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+      similarSongsResolver: ({required seed, required excludedIds, required limit, recentlyPlayed = const <Song>[]}) async => [],
     );
 
     final handler = CapuTuneAudioHandler(player);
@@ -201,7 +201,7 @@ void main() {
   test('sleep timer persists across songs and reports its end time', () async {
     final player = PlayerService(
       resolver: _FakeStreamResolver(),
-      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+      similarSongsResolver: ({required seed, required excludedIds, required limit, recentlyPlayed = const <Song>[]}) async => [],
     );
 
     expect(player.sleepTimerEndsAt, isNull);
@@ -231,7 +231,7 @@ void main() {
   test('replacing a sleep timer restarts it rather than stacking', () async {
     final player = PlayerService(
       resolver: _FakeStreamResolver(),
-      similarSongsResolver: ({required seed, required excludedIds, required limit}) async => [],
+      similarSongsResolver: ({required seed, required excludedIds, required limit, recentlyPlayed = const <Song>[]}) async => [],
     );
 
     player.setSleepTimer(const Duration(minutes: 60));

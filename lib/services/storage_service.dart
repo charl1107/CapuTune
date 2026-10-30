@@ -177,6 +177,12 @@ class StorageService {
     await _recentsBox.put('recents', json.encode(data));
   }
 
+  /// Clears the recent-plays history. Used by tests to isolate cases;
+  /// also callable from a future "clear listening history" setting.
+  static Future<void> clearRecentPlays() async {
+    await _recentsBox.put('recents', json.encode(<dynamic>[]));
+  }
+
   static int getPlayCount(String songId) =>
       _playCountsBox.get(songId, defaultValue: 0);
 

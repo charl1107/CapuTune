@@ -41,7 +41,7 @@ PlayerService _player({SimilarSongsResolver? resolver}) {
   final player = PlayerService(
     resolver: _FakeStreamResolver(),
     similarSongsResolver: resolver ??
-        (({required seed, required excludedIds, required limit}) async =>
+        (({required seed, required excludedIds, required limit, recentlyPlayed = const <Song>[]}) async =>
             const <Song>[]),
   );
   player.setAutoplay(true);
@@ -135,6 +135,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         called = true;
         return [_song('r1')];
@@ -153,6 +154,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         return [_song('r1').copyWith(isRecommended: true)];
       });
@@ -172,6 +174,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         return [
           _song('r1').copyWith(isRecommended: true),
@@ -193,6 +196,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         seenExcluded = excludedIds;
         return [];
@@ -206,11 +210,35 @@ void main() {
       expect(seenExcluded, containsAll(['p1', 'p2']));
     });
 
+    test('Recommendation lookups receive recently played tracks', () async {
+      List<Song>? seenRecent;
+      final player = _player(resolver: ({
+        required seed,
+        required excludedIds,
+        required limit,
+        recentlyPlayed = const <Song>[],
+      }) async {
+        seenRecent = recentlyPlayed;
+        return [];
+      });
+
+      // Record a recent play, then trigger an end-of-queue lookup.
+      await StorageService.addRecentPlay(_song('heard'));
+      await player.play(_song('p1'));
+      await player.playNext();
+
+      expect(seenRecent, isNotNull);
+      expect(seenRecent!.map((s) => s.id), contains('heard'));
+      // Clean up so other tests start with empty recents.
+      await StorageService.clearRecentPlays();
+    });
+
     test('Falls back to stopping when no recommendations are available', () async {
       final player = _player(resolver: ({
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         return [];
       });
@@ -227,6 +255,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         throw StateError('network down');
       });
@@ -244,6 +273,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         called = true;
         return [_song('r1')];
@@ -264,6 +294,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         called = true;
         return [_song('r1')];
@@ -311,6 +342,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         called = true;
         return [_song('r1')];
@@ -350,6 +382,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         return [_song('r1').copyWith(isRecommended: true)];
       });
@@ -467,6 +500,7 @@ void main() {
         required seed,
         required excludedIds,
         required limit,
+        recentlyPlayed = const <Song>[],
       }) async {
         resolverCalled = true;
         return [_song('rec1')];
