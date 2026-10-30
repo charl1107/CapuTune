@@ -1,25 +1,32 @@
 name: Android Release
 
-# Publishes a release on every push to the default branch, and on demand
-# (workflow_dispatch) with a selectable version increment.
+# Tag-driven releases: pushing a tag vX.Y.Z publishes CapuTune version
+# X.Y.Z. The tag IS the version — you choose the next number yourself
+# (patch for small fixes, minor for features, major for big or breaking
+# changes); the build number still auto-increments from pubspec.yaml.
+#
+# Shipping a release:
+#   git push origin main                       # land the work first
+#   git tag v2.0.0 && git push origin v2.0.0   # then tag its tip
+#
+# Pushing to main never releases. This workflow is the release owner: it
+# stamps the tag version into pubspec.yaml, commits the bump back to the
+# default branch, builds the signed APK and publishes the GitHub Release.
+# The iOS workflow attaches the .ipa to the same release.
+
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
-      bump:
-        description: Version increment for this release
-        type: choice
+      tag:
+        description: Existing tag to release (e.g. v2.0.0)
         required: true
-        default: patch
-        options:
-          - patch
-          - minor
-          - major
+        type: string
 
-# One release at a time; queued, never cancelled, so two pushes in quick
-# succession bump the version sequentially instead of racing on the tag.
+# One release at a time; queued, never cancelled, so two tags pushed in
+# quick succession release sequentially instead of racing.
 concurrency:
   group: android-release
   cancel-in-progress: false
@@ -27,22 +34,72 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
 jobs:
   release:
     name: Build and publish Android APK
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Check out the release tag
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
 
-      - name: Require the default branch
+      - name: Resolve version from the tag
+        id: version
         env:
-          EXPECTED_BRANCH: ${{ github.event.repository.default_branch }}
+          TAG_NAME: ${{ inputs.tag || github.ref_name }}
         run: |
-          if [[ "$GITHUB_REF_NAME" != "$EXPECTED_BRANCH" ]]; then
-            echo "Run releases from the default branch ($EXPECTED_BRANCH)."
+          set -euo pipefail
+          tag="$TAG_NAME"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$tag' is not a release tag (expected vX.Y.Z)."
+            exit 1
+          fi
+          version=${tag#v}
+          current=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n 1)
+          pubspec_version=${current%%+*}
+          build=${current##*+}
+          case "$build" in
+            ''|*[!0-9]*) build=0 ;;
+          esac
+          lowest=$(printf '%s\n%s\n' "$version" "$pubspec_version" | sort -V | head -n 1)
+          if [[ "$lowest" != "$pubspec_version" ]]; then
+            echo "Tag version $version is lower than pubspec version $pubspec_version; refusing to downgrade."
+            exit 1
+          fi
+          build=$((build + 1))
+          sed -i "s/^version:.*/version: $version+$build/" pubspec.yaml
+          {
+            echo "version=$version"
+            echo "build=$build"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Require the tag to be on the default branch
+        run: |
+          set -euo pipefail
+          git fetch origin "$DEFAULT_BRANCH"
+          if ! git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH"; then
+            echo "This tag points at a commit that is not on $DEFAULT_BRANCH."
+            echo "Push your work to $DEFAULT_BRANCH first, then create the tag on its tip."
+            exit 1
+          fi
+
+      - name: Fail fast if this version is already released
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json assets \
+              -q '.assets[].name' 2>/dev/null \
+             | grep -q "caputune-${RELEASE_TAG}-android.apk"; then
+            echo "Release $RELEASE_TAG already exists with an Android APK."
+            echo "Delete the release and tag first, or pick a new version."
             exit 1
           fi
 
@@ -80,38 +137,6 @@ jobs:
             echo "storeType=PKCS12"
           } > android/key.properties
 
-      - name: Increment app version
-        id: version
-        env:
-          # inputs.bump only exists for workflow_dispatch; on push this
-          # defaults to a patch bump.
-          BUMP: ${{ inputs.bump || 'patch' }}
-        run: |
-          set -euo pipefail
-          current=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n 1)
-          version=${current%%+*}
-          build=${current##*+}
-          if [[ "$version" == "$current" ]]; then build=0; fi
-          IFS='.' read -r major minor patch <<< "$version"
-          [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ && "$build" =~ ^[0-9]+$ ]]
-          case "$BUMP" in
-            major) major=$((major + 1)); minor=0; patch=0 ;;
-            minor) minor=$((minor + 1)); patch=0 ;;
-            patch) patch=$((patch + 1)) ;;
-            *) echo "Unsupported version increment: $BUMP"; exit 1 ;;
-          esac
-          build=$((build + 1))
-          next="$major.$minor.$patch"
-          tag="v$next"
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "Tag $tag already exists. Fetch the latest default branch and retry."
-            exit 1
-          fi
-          sed -i "s/^version:.*/version: $next+$build/" pubspec.yaml
-          echo "version=$next" >> "$GITHUB_OUTPUT"
-          echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
       - name: Install dependencies
         run: flutter pub get
 
@@ -123,17 +148,24 @@ jobs:
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Commit version and create tag
+      - name: Commit the version bump
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pubspec.yaml pubspec.lock
-          git commit -m "chore: release ${RELEASE_TAG}"
-          git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
-          git push origin "HEAD:${GITHUB_REF_NAME}" "$RELEASE_TAG"
+          if [[ "$(git show "origin/$DEFAULT_BRANCH":pubspec.yaml \
+                  | sed -n 's/^version:[[:space:]]*//p' | head -n 1)" \
+                == "$RELEASE_VERSION+$BUILD_NUMBER" ]]; then
+            echo "Version $RELEASE_VERSION+$BUILD_NUMBER is already on $DEFAULT_BRANCH (previous run); skipping the bump commit."
+          else
+            git add pubspec.yaml pubspec.lock
+            git commit -m "chore: release ${RELEASE_TAG}"
+            git push origin "HEAD:$DEFAULT_BRANCH"
+          fi
 
       - name: Publish GitHub Release
         env:
@@ -149,7 +181,12 @@ jobs:
           # this before handing the APK to the system installer; releases that
           # do not publish it are only offered as a link to this page.
           sha256sum "$asset" > "$asset.sha256"
-          gh release create "$RELEASE_TAG" "$asset" "$asset.sha256" \
-            --title "CapuTune ${RELEASE_TAG}" \
-            --generate-notes
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            # Re-run of a partially failed release: refresh the assets.
+            gh release upload "$RELEASE_TAG" "$asset" "$asset.sha256" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$asset" "$asset.sha256" \
+              --title "CapuTune ${RELEASE_TAG}" \
+              --generate-notes
+          fi
           echo "Published CapuTune ${RELEASE_VERSION}+${BUILD_NUMBER}"

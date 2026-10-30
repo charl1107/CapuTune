@@ -1,23 +1,32 @@
 name: iOS Build
 
-# Builds an unsigned iOS app archive on every push to the default branch and
-# attaches it as an .ipa to the same GitHub Release the Android workflow
-# creates. iOS compilation requires macOS/Xcode, so this runs on a macOS
+# Tag-driven releases, following the Android workflow. Pushing a tag
+# vX.Y.Z (or dispatching this workflow with one) builds an unsigned iOS
+# app archive and attaches it as an .ipa to the CapuTune vX.Y.Z GitHub
+# Release. iOS compilation requires macOS/Xcode, so this runs on a macOS
 # runner.
 #
 # The .ipa is UNSIGNED: there is no Apple Developer account certificate in
 # CI. Sideload it with Sideloadly / AltStore / Xcode, which re-sign it with
 # a personal (free) Apple ID — the standard route for self-distributed apps.
 #
-# The Android workflow is the release owner (it bumps the version, creates
-# the tag and the release). This job waits for that release to exist, then
-# appends the iOS asset. No signing secrets required.
+# The Android workflow is still the release owner (it publishes the
+# release and its APK first). Both workflows read the version from the
+# tag and stamp the same build number into pubspec.yaml, so the IPA
+# matches the APK without any cross-run coordination. This job only waits
+# for the release to exist right before attaching its assets. No signing
+# secrets required.
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release (e.g. v2.0.0)
+        required: true
+        type: string
 
 concurrency:
   group: ios-build
@@ -26,15 +35,50 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
 jobs:
   build:
     name: Build unsigned iOS IPA
     runs-on: macos-15
     steps:
-      - name: Check out repository
+      - name: Check out the release tag
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Resolve version from the tag
+        id: version
+        env:
+          TAG_NAME: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag="$TAG_NAME"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$tag' is not a release tag (expected vX.Y.Z)."
+            exit 1
+          fi
+          version=${tag#v}
+          current=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n 1)
+          pubspec_version=${current%%+*}
+          build=${current##*+}
+          case "$build" in
+            ''|*[!0-9]*) build=0 ;;
+          esac
+          lowest=$(printf '%s\n%s\n' "$version" "$pubspec_version" | sort -V | head -n 1)
+          if [[ "$lowest" != "$pubspec_version" ]]; then
+            echo "Tag version $version is lower than pubspec version $pubspec_version; refusing to downgrade."
+            exit 1
+          fi
+          build=$((build + 1))
+          sed -i "s/^version:.*/version: $version+$build/" pubspec.yaml
+          {
+            echo "version=$version"
+            echo "build=$build"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -51,74 +95,12 @@ jobs:
           flutter analyze
           flutter test
 
-      - name: Wait for the Android release job
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          # The Android workflow bumps the version, creates the tag, and
-          # publishes the release. Wait for a run of the Android workflow on
-          # this exact commit to finish, then wait for its release tag.
-          for i in $(seq 1 60); do
-            run_id=$(gh run list --workflow "Android Release" \
-              --commit "$HEAD_SHA" --json databaseId,status \
-              -q '.[0].databaseId' 2>/dev/null || true)
-            if [[ -n "$run_id" ]]; then
-              status=$(gh run view "$run_id" --json status,conclusion \
-                -q '.status + ":" + (.conclusion // "")')
-              echo "Android run $run_id -> $status"
-              case "$status" in
-                completed:success) break ;;
-                completed:*) echo "Android run did not succeed"; exit 1 ;;
-                *) ;;
-              esac
-            fi
-            sleep 30
-          done
-          [[ -n "$run_id" ]] || { echo "Android Release run never started"; exit 1; }
-
-      - name: Resolve release tag
-        id: tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          # The release tag for this commit was bumped by the Android job:
-          # fetch its commit, then read the version back from pubspec.yaml.
-          git fetch origin main
-          git show origin/main:pubspec.yaml | \
-            sed -n 's/^version:[[:space:]]*\([0-9.]*\)+.*/v\1/p' | head -1 \
-            > tag.txt
-          tag=$(cat tag.txt)
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Could not resolve release tag from pubspec.yaml"; exit 1
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Check out the release commit
-        env:
-          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          set -euo pipefail
-          # The tag points at the Android workflow's version-bump commit, which
-          # contains the exact code being released. Build that commit instead of
-          # the pre-bump commit checked out by the runner, otherwise the app's
-          # embedded CFBundleShortVersionString lags the release tag.
-          git fetch --force origin \
-            "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
-          git checkout --detach "$RELEASE_TAG"
-          grep -m1 "^version:" pubspec.yaml
-          flutter pub get
-
       - name: Build iOS app (unsigned, no codesign)
-        run: |
-          flutter build ios --release --no-codesign
+        run: flutter build ios --release --no-codesign
 
       - name: Package .ipa
         env:
-          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
           app=$(find build/ios/iphoneos -name "Runner.app" -maxdepth 1)
@@ -131,15 +113,17 @@ jobs:
 
       - name: Verify IPA version matches the release tag
         env:
-          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
           set -euo pipefail
           plist="build/ios/iphoneos/Runner.app/Info.plist"
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
           build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")
           echo "Built version: $version ($build), release tag: $RELEASE_TAG"
-          if [[ "v$version" != "$RELEASE_TAG" ]]; then
-            echo "ERROR: built version v$version does not match release $RELEASE_TAG"
+          if [[ "$version" != "$RELEASE_VERSION" || "$build" != "$BUILD_NUMBER" ]]; then
+            echo "ERROR: built version $version ($build) does not match release $RELEASE_TAG"
             exit 1
           fi
           unzip -l "caputune-${RELEASE_TAG}-ios-unsigned.ipa" \
@@ -154,9 +138,20 @@ jobs:
       - name: Attach .ipa to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
+          # The Android workflow is the release owner: wait for it to
+          # publish the CapuTune ${RELEASE_TAG} release (it builds and tests
+          # first, so this can take a while), then upload the iOS assets.
+          for i in $(seq 1 80); do
+            if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Release ${RELEASE_TAG} not published yet (attempt $i/80)"; sleep 30
+          done
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 \
+            || { echo "Release ${RELEASE_TAG} never appeared"; exit 1; }
           # Retry a few times in case the release was created milliseconds ago.
           for i in 1 2 3 4 5; do
             if gh release upload "$RELEASE_TAG" \
@@ -166,6 +161,6 @@ jobs:
               echo "Attached iOS assets to ${RELEASE_TAG}"
               exit 0
             fi
-            echo "Release ${RELEASE_TAG} not ready yet (attempt $i)"; sleep 20
+            echo "Upload failed (attempt $i)"; sleep 20
           done
           echo "Could not attach iOS assets"; exit 1
