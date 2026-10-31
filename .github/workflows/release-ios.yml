@@ -73,8 +73,11 @@ jobs:
             exit 1
           fi
           build=$((build + 1))
-          # BSD sed (macOS) needs an explicit empty backup suffix for -i.
-          sed -i '' -e "s/^version:.*/version: $version+$build/" pubspec.yaml
+          # sed -i.bak is the only in-place form that works on both BSD sed
+          # (macOS runners, where bare -i eats the file as the suffix) and
+          # GNU sed (where the empty-suffix form '' is read as a filename).
+          sed -i.bak -e "s/^version:.*/version: $version+$build/" pubspec.yaml
+          rm -f pubspec.yaml.bak
           {
             echo "version=$version"
             echo "build=$build"
