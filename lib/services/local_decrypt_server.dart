@@ -40,6 +40,11 @@ class LocalDecryptServer {
       _starting = _start();
       await _starting;
     }
+    // Only the currently-playing file needs to stay registered: mpv re-
+    // requests the *current* id for ranges/opens, never the previous song's.
+    // Dropping stale registrations keeps the map from growing with every
+    // song played over the app's lifetime.
+    _files.clear();
     _files[id] = file;
     final port = _server!.port;
     return Uri.parse('http://${InternetAddress.loopbackIPv4.address}:$port/$id');

@@ -103,6 +103,9 @@ class MiniPlayer extends StatelessWidget {
                       width: 48,
                       height: 48,
                       fit: BoxFit.cover,
+                      // 48dp tile: decode ≤96px, never the source size.
+                      memCacheWidth: 96,
+                      memCacheHeight: 96,
                       placeholder: (context, url) => Container(
                         width: 48,
                         height: 48,

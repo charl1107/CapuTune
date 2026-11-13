@@ -209,6 +209,68 @@ void main() {
     });
   });
 
+  group('parseYtmSongs — broad video cards', () {
+    test('parses an official music video card such as Kiyo Eba', () {
+      final response = {
+        'contents': {
+          'tabbedSearchResultsRenderer': {
+            'tabs': [
+              {
+                'tabRenderer': {
+                  'content': {
+                    'sectionListRenderer': {
+                      'contents': [
+                        {
+                          'musicCardShelfRenderer': {
+                            'title': {
+                              'runs': [
+                                {
+                                  'text': 'Eba',
+                                  'navigationEndpoint': {
+                                    'watchEndpoint': {
+                                      'videoId': '7hZdxOo2QaA',
+                                    },
+                                  },
+                                },
+                              ],
+                            },
+                            'subtitle': {
+                              'runs': [
+                                {'text': 'Video'},
+                                {'text': ' • '},
+                                {'text': 'kiyo'},
+                                {'text': ' • '},
+                                {'text': '26M views'},
+                                {'text': ' • '},
+                                {'text': '3:51'},
+                              ],
+                            },
+                            'onTap': {
+                              'watchEndpoint': {
+                                'videoId': '7hZdxOo2QaA',
+                              },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      };
+
+      final result = parseYtmSongs(response);
+      expect(result, hasLength(1));
+      expect(result.single.id, '7hZdxOo2QaA');
+      expect(result.single.title, 'Eba');
+      expect(result.single.artist, 'kiyo');
+      expect(result.single.duration, '3:51');
+    });
+  });
+
   group('parseYtmSongs — type-specifier skip', () {
     test('leading unlinked "Song" label is never parsed as an artist', () {
       // Mirrors the default-response shape ("Song • Artist") where the

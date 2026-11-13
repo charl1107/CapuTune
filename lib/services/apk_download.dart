@@ -26,4 +26,14 @@ class ApkDownload {
       onProgress: onProgress,
     );
   }
+
+  /// Startup housekeeping: sweeps abandoned update downloads out of the
+  /// app cache (staging files and APKs old enough to be dead weight).
+  /// Never touches downloaded music — that lives in the documents
+  /// directory, not the update cache.
+  static Future<int> cleanupStaleUpdateFiles({
+    Duration maxAge = const Duration(hours: 24),
+  }) {
+    return impl.cleanupStaleUpdateFiles(maxAge: maxAge);
+  }
 }

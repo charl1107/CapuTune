@@ -64,6 +64,14 @@ class _FakeSearch {
       .toList(growable: false);
 }
 
+/// Fake detailed remote search: `(results, failed)` answers, set per query.
+class _FakeDetailedSearch {
+  final Map<String, (List<Song>, bool)> _answers = {};
+
+  Future<(List<Song>, bool)> call(String query) async =>
+      _answers[query] ?? (<Song>[], false);
+}
+
 Future<Directory> _initStorage(WidgetTester tester) async {
   late Directory tempDir;
   await tester.runAsync(() async {
@@ -77,6 +85,7 @@ Future<Directory> _initStorage(WidgetTester tester) async {
 Future<void> _pumpScreen(
   WidgetTester tester, {
   _FakeSearch? search,
+  _FakeDetailedSearch? detailedSearch,
 }) async {
   await tester.pumpWidget(
     MultiProvider(
@@ -94,6 +103,9 @@ Future<void> _pumpScreen(
         home: SearchScreen(
           searchRemote:
               search == null ? null : (q) => search(q),
+          searchRemoteDetailed: detailedSearch == null
+              ? null
+              : (q) => detailedSearch(q),
         ),
       ),
     ),
@@ -143,6 +155,51 @@ void main() {
     expect(find.text('Song 1'), findsOneWidget);
     // The spinner must be gone and results shown.
     expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('a failed search shows the retry state, not "No results found."',
+      (tester) async {
+    final search = _FakeDetailedSearch();
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester, detailedSearch: search);
+
+    await tester.enterText(find.byType(TextField), 'eba');
+    // Request fails (offline / blocked endpoint): failure, not empty.
+    search._answers['eba'] = (<Song>[], true);
+    await tester.pump(SearchScreen.searchDebounce);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byIcon(Icons.cloud_off_outlined), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('No results found.'), findsNothing);
+
+    // Retry re-runs the search; this time it succeeds.
+    search._answers['eba'] = ([_song('1')], false);
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Song 1'), findsOneWidget);
+    expect(find.byIcon(Icons.cloud_off_outlined), findsNothing);
+  });
+
+  testWidgets('an empty-but-successful search shows "No results found.", '
+      'not the retry state', (tester) async {
+    final search = _FakeDetailedSearch();
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester, detailedSearch: search);
+
+    await tester.enterText(find.byType(TextField), 'no match ever');
+    search._answers['no match ever'] = (<Song>[], false);
+    await tester.pump(SearchScreen.searchDebounce);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('No results found.'), findsOneWidget);
+    expect(find.byIcon(Icons.cloud_off_outlined), findsNothing);
   });
 
   testWidgets('rapid typing batches into the newest query only',
@@ -236,6 +293,56 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
     // Back to the suggestions/empty state, not a results list.
     expect(find.text('No results found.'), findsNothing);
+  });
+
+  testWidgets('the clear button appears while typing, before any response',
+      (tester) async {
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester);
+
+    await tester.enterText(find.byType(TextField), 'eba');
+    await tester.pump();
+    // No search has fired yet (debounce pending), but the ✕ affordance
+    // must already track the field's text.
+    expect(find.byIcon(Icons.clear), findsOneWidget);
+  });
+
+  testWidgets('tapping clear cancels the pending debounce', (tester) async {
+    final search = _FakeSearch();
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester, search: search);
+
+    await tester.enterText(find.byType(TextField), 'eba');
+    await tester.pump();
+    // Clear inside the debounce window: nothing may fire afterwards.
+    await tester.tap(find.byIcon(Icons.clear));
+    await tester.pump();
+    await tester.pump(SearchScreen.searchDebounce);
+    await tester.pump(SearchScreen.searchDebounce);
+    expect(search.pendingQueries, isEmpty);
+  });
+
+  testWidgets('submitting supersedes a pending debounce', (tester) async {
+    final search = _FakeSearch();
+    final tempDir = await _initStorage(tester);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    await _pumpScreen(tester, search: search);
+
+    await tester.enterText(find.byType(TextField), 'eba');
+    await tester.pump();
+    // Commit before the debounce elapses: exactly one search, now.
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+    expect(search.pendingQueries, ['eba']);
+    await tester.pump(SearchScreen.searchDebounce);
+    expect(search.pendingQueries, ['eba'],
+        reason: 'the debounce timer must not re-fire after submit');
+    search.respond('eba', [_song('1')]);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Song 1'), findsOneWidget);
   });
 
   testWidgets('text field keeps vertical headroom around the glyphs',

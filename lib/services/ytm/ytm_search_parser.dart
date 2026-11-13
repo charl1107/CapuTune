@@ -41,6 +41,22 @@ class YtmSongResult implements RankableTrack {
 
 /// One parsed search suggestion: the suggested query text and the span
 /// that should be highlighted (null = whole suggestion).
+class YtmPlaylistItem {
+  final String id;
+  final String title;
+  final String artist;
+  final String? duration;
+  final String? thumbnailUrl;
+
+  const YtmPlaylistItem({
+    required this.id,
+    required this.title,
+    required this.artist,
+    this.duration,
+    this.thumbnailUrl,
+  });
+}
+
 class YtmSearchSuggestion {
   final String text;
 
@@ -114,8 +130,65 @@ List<YtmSongResult> parseYtmSongs(dynamic decoded) {
         if (song != null) results.add(song);
       }
     }
+
+    // Unfiltered YTM search responses use a musicCardShelfRenderer for the
+    // prominent video result. This is how videos such as Kiyo's "Eba"
+    // (an OMV rather than a catalog song) are represented. Include it as a
+    // playable result while retaining the songs-filter path above.
+    final card = section['musicCardShelfRenderer'];
+    if (card is Map) {
+      final song = _parseMusicCard(card);
+      if (song != null) results.add(song);
+    }
   }
   return results;
+}
+
+/// Parses an unfiltered `musicCardShelfRenderer` video result.
+///
+/// Card shelves identify the artist in the subtitle and expose playback via
+/// `onTap` rather than the list-item overlay. They do not have a catalog
+/// album, so only title, artist, duration, and thumbnail are mapped.
+YtmSongResult? _parseMusicCard(Map card) {
+  final videoId = nav(card, ['onTap', 'watchEndpoint', 'videoId']);
+  if (videoId is! String || videoId.isEmpty) return null;
+
+  final title = _runsText(nav(card, ['title', 'runs']));
+  if (title == null || title.isEmpty) return null;
+
+  final subtitleRuns = nav(card, ['subtitle', 'runs']);
+  final parts = <String>[];
+  if (subtitleRuns is List) {
+    for (final run in subtitleRuns) {
+      if (run is Map && run['text'] is String) {
+        final text = (run['text'] as String).trim();
+        if (text.isNotEmpty && text != '•') parts.add(text);
+      }
+    }
+  }
+  // Card subtitles are typically "Video • kiyo • 26M views • 3:51".
+  final artist = parts.length > 1 ? parts[1] : (parts.isNotEmpty ? parts.first : '');
+  final duration = parts.isNotEmpty && RegExp(r'^\d+:\d+$').hasMatch(parts.last)
+      ? parts.last
+      : null;
+
+  return YtmSongResult(
+    id: videoId,
+    title: title,
+    artist: artist,
+    duration: duration,
+    thumbnailUrl: _bestThumbnailUrl(card['thumbnail']),
+  );
+}
+
+String? _runsText(dynamic runs) {
+  if (runs is! List) return null;
+  final buffer = StringBuffer();
+  for (final run in runs) {
+    if (run is Map && run['text'] is String) buffer.write(run['text']);
+  }
+  final text = buffer.toString().trim();
+  return text.isEmpty ? null : text;
 }
 
 /// Flex-column renderer key wrapping each line of a list item.
@@ -181,6 +254,62 @@ YtmSongResult? _parseSongItem(Map item) {
     duration: duration,
     thumbnailUrl: _bestThumbnailUrl(item['thumbnail']),
   );
+}
+
+/// Parses the entries of a YouTube Music playlist browse response.
+List<YtmPlaylistItem> parseYtmPlaylist(dynamic decoded) {
+  final shelf = _findFirstMap(decoded, 'musicPlaylistShelfRenderer');
+  final contents = shelf?['contents'];
+  if (contents is! List) return [];
+  final out = <YtmPlaylistItem>[];
+  final seen = <String>{};
+  for (final entry in contents) {
+    if (entry is! Map) continue;
+    final item = entry['musicResponsiveListItemRenderer'];
+    if (item is! Map) continue;
+    // Playlist browse responses retain unavailable/region-blocked rows so the
+    // UI can grey them out. They cannot be played or imported, so omit them.
+    if (item['musicItemRendererDisplayPolicy'] == _greyOutPolicy) continue;
+    final id = nav(item, ['playlistItemData', 'videoId']);
+    if (id is! String || id.isEmpty || !seen.add(id)) continue;
+    final columns = item['flexColumns'];
+    if (columns is! List || columns.isEmpty) continue;
+    final title = _firstRunText(columns[0]);
+    if (title == null || title.isEmpty) continue;
+    final artist = columns.length > 1
+        ? (_firstRunText(columns[1]) ?? '')
+        : '';
+    String? duration;
+    final fixed = item['fixedColumns'];
+    if (fixed is List && fixed.isNotEmpty) {
+      duration = _firstRunText(fixed[0]);
+    }
+    out.add(YtmPlaylistItem(
+      id: id,
+      title: title,
+      artist: artist,
+      duration: duration,
+      thumbnailUrl: _bestThumbnailUrl(item['thumbnail']),
+    ));
+  }
+  return out;
+}
+
+Map? _findFirstMap(dynamic node, String key) {
+  if (node is Map) {
+    final value = node[key];
+    if (value is Map) return value;
+    for (final child in node.values) {
+      final found = _findFirstMap(child, key);
+      if (found != null) return found;
+    }
+  } else if (node is List) {
+    for (final child in node) {
+      final found = _findFirstMap(child, key);
+      if (found != null) return found;
+    }
+  }
+  return null;
 }
 
 /// Extracts query suggestions from `music/get_search_suggestions`

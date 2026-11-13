@@ -8,5 +8,10 @@ import '../models/song.dart';
 /// reports that nothing was found.
 Future<List<Song>> searchRemote(String query) async => [];
 
+/// Web/non-IO variant with the failure signal: the web build never
+/// searches, which is reported as a successful-but-empty answer.
+Future<(List<Song>, bool)> searchRemoteDetailed(String query) async =>
+    (<Song>[], false);
+
 /// Web stub: playlist import is unsupported on the web; always empty.
 Future<List<Song>> importPlaylistRemote(String url) async => [];

@@ -162,6 +162,9 @@ class _PlayerScreenState extends State<PlayerScreen>
                                     width: 160,
                                     height: 160,
                                     fit: BoxFit.cover,
+                                    // 160dp disc: decode ≤320px.
+                                    memCacheWidth: 320,
+                                    memCacheHeight: 320,
                                     placeholder: (context, url) => Container(
                                       width: 160,
                                       height: 160,

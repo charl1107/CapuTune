@@ -202,6 +202,13 @@ class _SongCardState extends State<SongCard>
                               width: artSize,
                               height: artSize,
                               fit: BoxFit.cover,
+                              // Decode at the display size (×2 for device
+                              // pixel ratios), not the source resolution —
+                              // a 52–104dp tile has no use for a full-size
+                              // bitmap, and every surplus decoded pixel
+                              // costs memory and GPU upload time.
+                              memCacheWidth: (artSize * 2).round(),
+                              memCacheHeight: (artSize * 2).round(),
                               placeholder: (context, url) => Container(
                                 width: artSize,
                                 height: artSize,
@@ -348,6 +355,9 @@ class _SongCardState extends State<SongCard>
                       width: 52,
                       height: 52,
                       fit: BoxFit.cover,
+                      // 52dp tile: decode ≤104px, never the source size.
+                      memCacheWidth: 104,
+                      memCacheHeight: 104,
                       placeholder: (context, url) => Container(
                         width: 52,
                         height: 52,

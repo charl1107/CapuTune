@@ -17,11 +17,14 @@ import 'ytm_search_parser.dart';
 
 /// Re-exported so callers of [YtmSearchClient] (and its tests) can name the
 /// result types without importing the parser directly.
-export 'ytm_search_parser.dart' show YtmSongResult, YtmSearchSuggestion;
+export 'ytm_search_parser.dart'
+    show YtmSongResult, YtmPlaylistItem, YtmSearchSuggestion;
 
 /// Where the request goes.
 const String kYtmSearchUrl =
     'https://music.youtube.com/youtubei/v1/search?alt=json';
+const String kYtmBrowseUrl =
+    'https://music.youtube.com/youtubei/v1/browse?alt=json';
 
 /// WEB_REMIX client context; `clientVersion` follows ytmusicapi's
 /// `1.YYYYMMDD.01.00` date-based scheme.
@@ -109,21 +112,70 @@ class YtmSearchClient {
   ///
   /// Empty or blank queries short-circuit to `[]` without any request.
   Future<List<YtmSongResult>> searchSongs(String query) async {
+    return _searchWithParams(query, kYtmSongsParams);
+  }
+
+  /// Searches the general YouTube Music result page for [query]. Unlike the
+  /// songs shelf, this also exposes prominent music videos (including older
+  /// official music videos such as Kiyo's "Eba") through a card shelf.
+  ///
+  /// This is deliberately separate from [searchSongs] so callers can use the
+  /// cheaper catalog request first and broaden only when needed.
+  Future<List<YtmSongResult>> searchVideos(String query) async {
+    return _searchWithParams(query, null);
+  }
+
+  Future<List<YtmSongResult>> _searchWithParams(
+      String query, String? params) async {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return [];
     try {
       final body = buildRequestBody(trimmed);
+      if (params == null) {
+        body.remove('params');
+      } else {
+        body['params'] = params;
+      }
       final fetch = _injectedFetch;
-      final decoded =
-          fetch != null
-              ? await fetch(kYtmSearchUrl, body)
-              : await _post(kYtmSearchUrl, body);
+      final decoded = fetch != null
+          ? await fetch(kYtmSearchUrl, body)
+          : await _post(kYtmSearchUrl, body);
       return parseYtmSongs(decoded);
     } on TimeoutException {
       return [];
     } catch (_) {
       return [];
     }
+  }
+
+  /// Fetches a public playlist through the Music-specific browse endpoint.
+  /// `VL` is required for YouTube Music playlist browse IDs.
+  Future<List<YtmPlaylistItem>> getPlaylist(String playlistId) async {
+    final id = playlistId.trim();
+    if (id.isEmpty) return [];
+    try {
+      final body = buildBrowseRequestBody('VL$id');
+      final fetch = _injectedFetch;
+      final decoded = fetch != null
+          ? await fetch(kYtmBrowseUrl, body)
+          : await _post(kYtmBrowseUrl, body);
+      return parseYtmPlaylist(decoded);
+    } on TimeoutException {
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// The POST body for Music browse requests.
+  Map<String, dynamic> buildBrowseRequestBody(String browseId) {
+    final request = buildRequestBody('');
+    request.remove('query');
+    request.remove('params');
+    return {
+      'context': request['context'],
+      'browseId': browseId,
+    };
   }
 
   /// The POST body this client sends, exposed for tests and transparency.

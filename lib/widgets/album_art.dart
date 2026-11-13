@@ -43,6 +43,11 @@ class AlbumArt extends StatelessWidget {
         width: size,
         height: size,
         fit: BoxFit.cover,
+        // Cap the decoded bitmap to the display size (×2 for device pixel
+        // ratios): the artwork is at most [size] logical px on screen, so
+        // decoding anything larger is wasted memory and GPU work.
+        memCacheWidth: (size * 2).round(),
+        memCacheHeight: (size * 2).round(),
         placeholder: (context, url) => _buildPlaceholder(context),
         errorWidget: (context, url, error) => _buildError(context),
       );

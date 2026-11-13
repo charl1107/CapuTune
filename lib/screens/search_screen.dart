@@ -9,12 +9,21 @@ import '../models/song.dart';
 import '../widgets/song_card.dart';
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key, this.searchRemote});
+  const SearchScreen({super.key, this.searchRemote, this.searchRemoteDetailed});
 
   /// Remote search used for every query. Defaults to [DiscoveryService.search];
   /// tests inject a fake here so instant-search behavior is verifiable
   /// without network access.
+  ///
+  /// Superseded by [searchRemoteDetailed] when both are provided.
   final Future<List<Song>> Function(String query)? searchRemote;
+
+  /// Detailed remote search: `(results, failed)` instead of a bare list, so
+  /// the screen can distinguish "no matches" from "the request failed" and
+  /// offer a retry instead of a misleading empty state. Defaults to
+  /// [DiscoveryService.searchDetailed]; tests inject a fake here.
+  final Future<(List<Song>, bool)> Function(String query)?
+      searchRemoteDetailed;
 
   /// Interval between the last keystroke and the fired search. Exposed for
   /// tests so they pump exactly to (and never past) the debounce boundary.
@@ -31,6 +40,12 @@ class _SearchScreenState extends State<SearchScreen> {
   List<Song> _results = [];
   bool _isLoading = false;
   bool _hasSearched = false;
+
+  /// True when the newest search request failed (offline, blocked
+  /// endpoint, timeout). Shown as a retry state instead of the misleading
+  /// "No results found." — a failed request and a genuinely empty answer
+  /// are different things.
+  bool _searchFailed = false;
   List<String> _recentSearches = [];
   List<Song> _suggestedSongs = [];
 
@@ -81,35 +96,49 @@ class _SearchScreenState extends State<SearchScreen> {
         _results = [];
         _hasSearched = false;
         _isLoading = false;
+        _searchFailed = false;
       });
       return;
     }
-
     if (record) StorageService.addRecentSearch(query);
     setState(() {
       _recentSearches = StorageService.getRecentSearches();
       _isLoading = true;
       _hasSearched = true;
+      _searchFailed = false;
     });
 
     try {
-      final results =
-          await (widget.searchRemote ?? DiscoveryService.search)(query);
+      // Detailed search when available (distinguishes failure from empty);
+      // otherwise wrap the legacy plain-search injection as always-success.
+      final (results, failed) = switch ((widget.searchRemoteDetailed, widget.searchRemote)) {
+        (final detailed?, _) => await detailed(query),
+        (null, final plain?) => ((await plain(query)), false),
+        _ => await DiscoveryService.searchDetailed(query),
+      };
       if (!mounted || seq != _searchSeq) return;
       setState(() {
         _results = results;
+        // Only a request that could not be completed counts as a failure;
+        // an empty-but-successful answer is a genuine "no results".
+        _searchFailed = failed && results.isEmpty;
         _isLoading = false;
       });
     } catch (_) {
       if (!mounted || seq != _searchSeq) return;
       setState(() {
         _results = [];
+        _searchFailed = true;
         _isLoading = false;
       });
     }
   }
 
   void _onSearchChanged(String query) {
+    // Rebuild so the clear (✕) affordance tracks the field's text even
+    // before a search fires: without this the button only appears after
+    // the first response lands, and lingers after the field empties.
+    setState(() {});
     // Debounce: batch keystrokes into one request after typing settles, so
     // "metallica" costs one round-trip instead of nine. The sequence guard
     // inside _search still protects against stragglers from earlier timers.
@@ -119,12 +148,19 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _submitSearch(String query) {
     _focusNode.unfocus();
+    // Direct submission supersedes any debounce already ticking for the
+    // same (or a partial) query.
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
     _search(record: true);
   }
 
   void _tapRecentSearch(String query) {
     _controller.text = query;
     _focusNode.unfocus();
+    setState(() {});
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
     _search(record: true);
   }
 
@@ -179,7 +215,16 @@ class _SearchScreenState extends State<SearchScreen> {
                           setState(() {
                             _results = [];
                             _hasSearched = false;
+                            _isLoading = false;
+                            _searchFailed = false;
                           });
+                          // Invalidate everything in flight: a pending
+                          // debounce timer must not re-fire for the now
+                          // empty field, and a late response for the
+                          // cleared query must not repopulate results.
+                          _debounceTimer?.cancel();
+                          _debounceTimer = null;
+                          _searchSeq++;
                         },
                       )
                     : null,
@@ -204,31 +249,71 @@ class _SearchScreenState extends State<SearchScreen> {
                 ? const Center(child: CircularProgressIndicator())
                 : showSuggestions
                     ? _buildSuggestions(context, playerService)
-                    : _results.isEmpty
-                        ? Center(
-                            child: Text(
-                              'No results found.',
-                              style: TextStyle(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                            ),
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            itemCount: _results.length,
-                            itemBuilder: (context, index) {
-                              return SongCard(
-                                song: _results[index],
-                                onTap: () {
-                                  playerService.play(_results[index]);
+                    : _results.isEmpty && _searchFailed
+                        ? _buildSearchFailed(context)
+                        : _results.isEmpty
+                            ? Center(
+                                child: Text(
+                                  'No results found.',
+                                  style: TextStyle(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                                ),
+                              )
+                            : ListView.builder(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                itemCount: _results.length,
+                                itemBuilder: (context, index) {
+                                  return SongCard(
+                                    song: _results[index],
+                                    onTap: () {
+                                      playerService.play(_results[index]);
+                                    },
+                                  );
                                 },
-                              );
-                            },
-                          ),
+                              ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Failure state for the newest search: honest about what happened
+  /// (the request failed — offline, blocked endpoint, timeout) with a
+  /// retry affordance, instead of the old silent degradation to
+  /// "No results found." that blamed the catalog.
+  Widget _buildSearchFailed(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.cloud_off_outlined,
+              size: 48,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              "Couldn't search. Check your connection and try again.",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _search,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
       ),
     );
   }

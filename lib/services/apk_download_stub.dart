@@ -15,3 +15,6 @@ Future<DownloadResult> downloadVerified({
     message: 'In-app updates are only supported on Android',
   );
 }
+
+/// Web/non-IO fallback: there is no update cache to sweep.
+Future<int> cleanupStaleUpdateFiles({Duration? maxAge}) async => 0;

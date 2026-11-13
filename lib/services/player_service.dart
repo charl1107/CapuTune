@@ -184,7 +184,10 @@ class PlayerService extends ChangeNotifier {
       }
     });
     engine.stream.log.listen((l) {
-      debugPrint('[mk] ${l.text}');
+      // Logcat writes are CPU+I/O per line; mpv can be chatty. Keep the
+      // in-memory diagnostics tail in every build (it feeds error
+      // messages), but only echo lines in debug builds.
+      if (kDebugMode) debugPrint('[mk] ${l.text}');
       final text = l.text.replaceAll(RegExp(r'https?://\S+'), '<url>');
       final lvl = l.level.trim().toLowerCase();
       final isErr = lvl.startsWith('e') || lvl.startsWith('f');
@@ -540,6 +543,11 @@ class PlayerService extends ChangeNotifier {
     if (!_engineUsable) return;
     if (_hasEngine) {
       await _engine.seek(position);
+      // notifyListeners() refreshes the MediaSession's position snapshot
+      // (updatePosition + updateTime): Android interpolates playback
+      // progress from it, so without this the lock-screen seek bar would
+      // show a stale position until the next state change.
+      notifyListeners();
     }
   }
 

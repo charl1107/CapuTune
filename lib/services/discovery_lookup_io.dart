@@ -55,6 +55,10 @@ String? _extractPlaylistId(String url) {
 /// (Test-only by convention; not for app code.)
 YtmSearchClient Function()? ytmClientFactoryForTest;
 
+/// The client used for catalog and suggestion requests (test-overridable).
+YtmSearchClient _ytmClient() =>
+    ytmClientFactoryForTest?.call() ?? YtmSearchClient();
+
 /// Searches YouTube Music's song catalog for [query] and returns the
 /// results as [Song]s.
 ///
@@ -77,30 +81,53 @@ YtmSearchClient Function()? ytmClientFactoryForTest;
 /// untouched.
 ///
 /// Any failure (network, parsing, extraction) is swallowed and reported as
-/// an empty list so callers never see an exception.
-Future<List<Song>> searchRemote(String query) async {
-  final raw = await searchRaw(query);
-  return rankTracks(raw, query);
-}
+/// an empty list — see [searchRemoteDetailed] when the caller must
+/// distinguish "no matches" from "the request failed".
+Future<List<Song>> searchRemote(String query) async =>
+    (await searchRemoteDetailed(query)).$1;
 
-/// The unranked search pipeline: raw catalog rows for [query], merged with
-/// genre-expansion results when [query] is a genre word the raw search
-/// cannot match textually.
+/// The search pipeline with an honest failure signal.
 ///
-/// Exposed for tests and for callers that need the provider's own order
-/// ([searchRemote] applies local ranking on top of this).
-/// The client used for catalog and suggestion requests (test-overridable).
-YtmSearchClient _ytmClient() => ytmClientFactoryForTest?.call() ?? YtmSearchClient();
-
-Future<List<Song>> searchRaw(String query) async {
+/// Returns `(results, failed)`: [failed] is true only when the catalog
+/// request itself could not be completed (offline, timeout, server error,
+/// parse failure). An empty-but-successful answer reports `failed: false`,
+/// so the UI can say "no results" instead of blaming the connection.
+/// The ranked result list is identical to [searchRemote]'s.
+Future<(List<Song>, bool)> searchRemoteDetailed(String query) async {
   try {
     final trimmed = query.trim();
-    if (trimmed.isEmpty) return [];
+    if (trimmed.isEmpty) return (<Song>[], false);
 
     final client = _ytmClient();
-    final rawResults = await client.searchSongs(trimmed);
-    final results = rawResults.map(songFromYtm).toList();
-    final seenIds = rawResults.map((r) => r.id).toSet();
+    // Search the unfiltered music.youtube.com response as the source of
+    // truth. The Songs-filter request hides official videos, lyric uploads,
+    // live versions, and older/uncatalogued tracks (for example Kiyo's
+    // "Ikaw Lang" and "Eba"). The parser keeps playable music rows while
+    // excluding artist/album/playlist metadata rows.
+    List<YtmSongResult> rawResults = const [];
+    try {
+      // Dynamic invocation keeps older test doubles source-compatible while
+      // production always uses YtmSearchClient.searchVideos().
+      final broadCall = (client as dynamic).searchVideos(trimmed);
+      if (broadCall is Future<List<YtmSongResult>>) {
+        rawResults = await broadCall;
+      } else {
+        // Compatibility fallback only for legacy clients/test doubles.
+        rawResults = await client.searchSongs(trimmed);
+      }
+    } catch (_) {
+      // Legacy test doubles may throw NoSuchMethodError for searchVideos.
+      // Fall back to the catalog method in that compatibility case; the real
+      // client catches its own network errors and normally never reaches here.
+      // Let a genuine legacy catalog failure reach the outer failure
+      // contract instead of turning it into a successful empty search.
+      rawResults = await client.searchSongs(trimmed);
+    }
+    final results = <Song>[];
+    final seenIds = <String>{};
+    for (final row in rawResults) {
+      if (seenIds.add(row.id)) results.add(songFromYtm(row));
+    }
 
     // Genre-word expansion: the songs filter answers bare genre words with
     // popularity picks (titles often *contain* the word — "Metal Health" —
@@ -113,9 +140,37 @@ Future<List<Song>> searchRaw(String query) async {
       }
     }
 
-    return results;
+    return (rankTracks(results, query), false);
   } catch (_) {
-    return [];
+    return (<Song>[], true);
+  }
+}
+
+/// The unranked search pipeline (kept for the pipeline tests): raw catalog
+/// rows for [query], merged with genre-expansion results when [query] is a
+/// genre word the raw search cannot match textually. No local ranking —
+/// callers that need provider order use this.
+Future<List<Song>> searchRaw(String query) async => (await _searchRawDetailed(query)).$1;
+
+Future<(List<Song>, bool)> _searchRawDetailed(String query) async {
+  try {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return (<Song>[], false);
+
+    final client = _ytmClient();
+    final rawResults = await client.searchSongs(trimmed);
+    final results = rawResults.map(songFromYtm).toList();
+    final seenIds = rawResults.map((r) => r.id).toSet();
+
+    if (_isGenreWord(trimmed)) {
+      for (final song in await _searchViaSuggestions(trimmed)) {
+        if (seenIds.add(song.id)) results.add(song);
+      }
+    }
+
+    return (results, false);
+  } catch (_) {
+    return (<Song>[], true);
   }
 }
 
@@ -185,6 +240,26 @@ Future<List<Song>> importPlaylistRemote(String url) async {
   try {
     final id = _extractPlaylistId(url);
     if (id == null || id.isEmpty) return [];
+
+    final uri = Uri.tryParse(url.trim());
+    final host = uri?.host.toLowerCase();
+    if (host == 'music.youtube.com') {
+      // YouTube Music playlists use the VL-prefixed browse ID. The browse
+      // response is already in playlist order, and its parser omits only
+      // greyed-out/unavailable entries.
+      final items = await _ytmClient().getPlaylist(id);
+      return items
+          .map((item) => Song(
+                id: item.id,
+                title: item.title,
+                artist: item.artist,
+                thumbnail: item.thumbnailUrl,
+                duration: item.duration,
+              ))
+          .toList();
+    }
+
+    // Keep the existing path for regular YouTube playlist URLs.
     final yt = YoutubeExplode();
     try {
       final videos = await yt.playlists.getVideos(id).toList();

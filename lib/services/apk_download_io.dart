@@ -123,3 +123,46 @@ Future<String> _sha256OfFile(File file) async {
   final digest = await sha256.bind(file.openRead()).first;
   return digest.toString();
 }
+
+/// Deletes files left in the update cache: `.part` staging files from
+/// downloads killed mid-transfer, and finished APKs older than [maxAge]
+/// (an APK that was never installed is dead weight — each one is tens of
+/// MB and the cache directory would otherwise accumulate every version
+/// ever downloaded).
+///
+/// Runs at startup, before any new download exists, so an in-progress
+/// write is never touched. The user's downloaded music and all playlists
+/// live in the documents directory and are never visited here.
+///
+/// Returns the number of files deleted.
+Future<int> cleanupStaleUpdateFiles({
+  Duration maxAge = const Duration(hours: 24),
+  Directory? cacheDirOverride,
+}) async {
+  try {
+    final cacheDir = cacheDirOverride ?? await getTemporaryDirectory();
+    final updatesDir = Directory('${cacheDir.path}/updates');
+    if (!await updatesDir.exists()) return 0;
+    var deleted = 0;
+    await for (final entry in updatesDir.list()) {
+      if (entry is! File) continue;
+      try {
+        // A staging file is always stale once the process died; a finished
+        // APK must be young enough to still be installable.
+        final isStaging = entry.path.endsWith('.part');
+        final stat = await entry.stat();
+        if (!isStaging &&
+            !stat.modified.isBefore(DateTime.now().subtract(maxAge))) {
+          continue;
+        }
+        await entry.delete();
+        deleted++;
+      } catch (_) {
+        // Cannot stat or delete this entry — leave it; best effort only.
+      }
+    }
+    return deleted;
+  } catch (_) {
+    return 0;
+  }
+}

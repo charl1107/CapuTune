@@ -19,20 +19,22 @@ import 'player_service.dart';
 ///   Pause never resumes, even if the session state briefly diverges.
 class CapuTuneAudioHandler extends BaseAudioHandler with SeekHandler {
   final PlayerService _playerService;
-  StreamSubscription? _posSub;
   StreamSubscription? _durSub;
 
   CapuTuneAudioHandler(this._playerService) {
     _playerService.addListener(_onPlayerStateChanged);
-    _posSub = _playerService.positionStream.listen(_onPositionChanged);
+    // NOTE: position is deliberately NOT pushed on every engine position
+    // tick. PlaybackStateCompat carries an (updatePosition, updateTime,
+    // speed) triple, so the system advances the lock-screen/notification
+    // progress bar itself while playing — a per-tick `playbackState.add`
+    // was a full MediaSession binder transaction every ~100 ms, day and
+    // night, for a value the system already knows how to interpolate.
+    // Position snapshots are refreshed on the events that can actually
+    // change the timeline (state changes, seeks, rate changes, new source):
+    // PlayerService calls notifyListeners() for those, which lands in
+    // [_onPlayerStateChanged] below.
     _durSub = _playerService.durationStream.listen(_onDurationChanged);
     _onPlayerStateChanged();
-  }
-
-  void _onPositionChanged(Duration pos) {
-    playbackState.add(playbackState.value.copyWith(
-      updatePosition: pos,
-    ));
   }
 
   void _onDurationChanged(Duration? dur) {
@@ -137,7 +139,6 @@ class CapuTuneAudioHandler extends BaseAudioHandler with SeekHandler {
 
   Future<void> dispose() async {
     _playerService.removeListener(_onPlayerStateChanged);
-    await _posSub?.cancel();
     await _durSub?.cancel();
   }
 }

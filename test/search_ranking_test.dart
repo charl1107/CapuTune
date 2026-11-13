@@ -229,5 +229,21 @@ void main() {
       final ranked = rankTracks(rows, 'nothing else matters');
       expect(ranked.first.id, 'b');
     });
+
+    test('provider order survives large equal-tier lists (sort stability)',
+        () {
+      // Dart's List.sort is NOT guaranteed stable; large lists leave the
+      // insertion-sort path. This pins the explicit index tiebreak: with
+      // 40 exact-title matches the provider (popularity) order must come
+      // back untouched, not scrambled by quicksort partitioning.
+      final tracks = [
+        for (var i = 0; i < 40; i++) _Track('Song $i', 'Artist'),
+      ];
+      final ranked = rankTracks(tracks, 'song');
+      expect(
+        ranked.map((t) => t.title).toList(),
+        [for (var i = 0; i < 40; i++) 'Song $i'],
+      );
+    });
   });
 }

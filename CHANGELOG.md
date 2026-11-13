@@ -3,6 +3,32 @@
 Notable changes for each release, written so users can understand what
 changed and why it matters. The newest release comes first.
 
+## [2.0.1] — 2026-11-14
+
+**More music, better discovery, and YouTube Music playlist imports.**
+
+### 🔎 Search
+
+- Search now uses the unfiltered YouTube Music results instead of only the
+  Songs catalog filter.
+- Find more official music videos, lyric videos, live performances,
+  user-uploaded recordings, older tracks, uncatalogued songs, and anime music.
+- Artist, album, playlist, podcast, unavailable, and other non-playable rows
+  are left out while playable videos remain available.
+- Duplicate videos are removed and results are still ranked by relevance, so
+  the best match appears first.
+- Multi-word searches can match across the title and artist, such as
+  `ikaw lang kiyo` finding **Ikaw Lang — kiyo**.
+
+### 📋 Playlist imports
+
+- Import public playlists directly from `music.youtube.com` URLs.
+- Playlist entries keep their original order.
+- Playable entries include their title, artist, duration, and artwork.
+- Region-blocked or unavailable entries are skipped without preventing the
+  rest of the playlist from importing.
+- Regular `youtube.com` playlist URLs continue to work as before.
+
 When you cut a release (`git tag vX.Y.Z && git push origin vX.Y.Z`), add
 its section here first, then paste the same text into the GitHub release
 (`gh release edit vX.Y.Z --notes-file <file>`).

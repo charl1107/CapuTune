@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:provider/provider.dart';
+import '../services/apk_download.dart';
 import '../services/player_service.dart';
 import '../services/update_service.dart';
 import '../theme/app_colors.dart';
@@ -49,6 +51,16 @@ class SettingsScreen extends StatelessWidget {
             onTap: () => _showQualityDialog(context, playerService),
           ),
           const Divider(),
+          const _SectionHeader('Storage'),
+          ListTile(
+            leading: const Icon(Icons.cleaning_services_outlined),
+            title: const Text('Clear cached images & files'),
+            subtitle: const Text(
+                'Frees artwork cache and leftover update downloads. '
+                'Downloaded songs and playlists are never touched.'),
+            onTap: () => _clearCache(context),
+          ),
+          const Divider(),
           const _SectionHeader('Updates'),
           _UpdateTile(updateService: updateService),
           const Divider(),
@@ -83,6 +95,29 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Clears disposable cached data: album-artwork thumbnails (the image
+  /// cache re-downloads on demand) and leftover update APKs in the app
+  /// cache directory. Downloaded songs live in the documents directory
+  /// and playlists in Hive — neither is ever touched here.
+  Future<void> _clearCache(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await DefaultCacheManager().emptyCache();
+      final removed = await ApkDownload.cleanupStaleUpdateFiles(maxAge: Duration.zero);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(removed > 0
+              ? 'Cache cleared (plus $removed leftover update file(s)).'
+              : 'Cached images cleared.'),
+        ),
+      );
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not clear the cache.')),
+      );
+    }
   }
 
   void _showQualityDialog(BuildContext context, PlayerService playerService) {

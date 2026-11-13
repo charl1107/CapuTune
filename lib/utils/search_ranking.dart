@@ -101,6 +101,14 @@ MatchTier classifyMatch(
   if (queryWords.length > 1 && queryWords.every(title.contains)) {
     return MatchTier.titleWordContains;
   }
+  // YTM often splits a search phrase across the title and artist fields.
+  // For example, "ikaw lang kiyo" is returned as title "Ikaw Lang" and
+  // artist "kiyo". Treat that as a strong textual match instead of pushing
+  // the correct track below unrelated popularity results.
+  if (queryWords.length > 1 &&
+      queryWords.every((word) => title.contains(word) || artist.contains(word))) {
+    return MatchTier.titleWordContains;
+  }
   if (queryWords.length == 1 && title.contains(normalizedQuery)) {
     return MatchTier.titleContains;
   }
@@ -123,17 +131,26 @@ int tierRank(MatchTier tier) => tier.index;
 
 /// Ranks [tracks] against [query], best matches first.
 ///
-/// Ties keep the provider's original relative order (popularity signal)
-/// via [List.sort]'s stability guarantee. Rows with no textual match keep
-/// their original order after every matching row.
+/// Ties keep the provider's original relative order (popularity signal).
+/// This is enforced explicitly with an index tiebreak: Dart's `List.sort`
+/// is NOT guaranteed stable (only small arrays take the insertion-sort
+/// path), so a plain `sort` could scramble equally-ranked rows whenever a
+/// result list grows large — e.g. reorder the exact match YouTube listed
+/// first behind another row of the same tier. Rows with no textual match
+/// keep their original order after every matching row.
 List<T> rankTracks<T extends RankableTrack>(List<T> tracks, String query) {
   final normalizedQuery = normalizeForMatch(query);
   final queryWords = wordsForMatch(query);
   final ranked = List<T>.of(tracks);
-  ranked.sort((a, b) {
-    final ra = tierRank(classifyMatch(a, normalizedQuery, queryWords));
-    final rb = tierRank(classifyMatch(b, normalizedQuery, queryWords));
-    return ra.compareTo(rb);
+  // Sort the ORIGINAL POSITIONS by (tier, original position), then rebuild
+  // the list in that order. The index tiebreak makes the order stable no
+  // matter which sort algorithm Dart uses.
+  final order = List<int>.generate(ranked.length, (i) => i);
+  order.sort((a, b) {
+    final ra = tierRank(classifyMatch(ranked[a], normalizedQuery, queryWords));
+    final rb = tierRank(classifyMatch(ranked[b], normalizedQuery, queryWords));
+    if (ra != rb) return ra.compareTo(rb);
+    return a.compareTo(b);
   });
-  return ranked;
+  return [for (final i in order) ranked[i]];
 }
