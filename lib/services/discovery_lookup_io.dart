@@ -241,13 +241,12 @@ Future<List<Song>> importPlaylistRemote(String url) async {
     final id = _extractPlaylistId(url);
     if (id == null || id.isEmpty) return [];
 
-    final uri = Uri.tryParse(url.trim());
-    final host = uri?.host.toLowerCase();
-    if (host == 'music.youtube.com') {
-      // YouTube Music playlists use the VL-prefixed browse ID. The browse
-      // response is already in playlist order, and its parser omits only
-      // greyed-out/unavailable entries.
-      final items = await _ytmClient().getPlaylist(id);
+    // YouTube and YouTube Music URLs share the same playlist ID. Use the
+    // Music browse endpoint first for both hosts: unlike the regular web
+    // scraper, it exposes the playlist rows (including rows that are not in
+    // YouTube Music's Songs search catalog) in provider order.
+    final items = await _ytmClient().getPlaylist(id);
+    if (items.isNotEmpty) {
       return items
           .map((item) => Song(
                 id: item.id,
@@ -259,7 +258,9 @@ Future<List<Song>> importPlaylistRemote(String url) async {
           .toList();
     }
 
-    // Keep the existing path for regular YouTube playlist URLs.
+    // Fall back to the regular YouTube importer if the Music browse endpoint
+    // cannot read this public playlist. This preserves compatibility with
+    // playlists that YouTube Music does not expose.
     final yt = YoutubeExplode();
     try {
       final videos = await yt.playlists.getVideos(id).toList();

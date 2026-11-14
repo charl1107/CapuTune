@@ -3,6 +3,19 @@
 Notable changes for each release, written so users can understand what
 changed and why it matters. The newest release comes first.
 
+## [2.0.4] — 2026-11-14
+
+**Broader playlist imports from both YouTube and YouTube Music.**
+
+### 📋 Playlist imports
+
+- Import public playlists from either `youtube.com` or `music.youtube.com`.
+- Both URL types use YouTube Music's playlist browse data first, so regular
+  YouTube playlist URLs receive the same broader coverage.
+- Playlist order is preserved and unavailable entries are skipped.
+- The regular YouTube importer remains as a fallback when YouTube Music cannot
+  expose a playlist.
+
 ## [2.0.1] — 2026-11-14
 
 **More music, better discovery, and YouTube Music playlist imports.**
@@ -22,12 +35,15 @@ changed and why it matters. The newest release comes first.
 
 ### 📋 Playlist imports
 
-- Import public playlists directly from `music.youtube.com` URLs.
+- Import public playlists from both `youtube.com` and `music.youtube.com` URLs.
+- Both URL types are read through YouTube Music's playlist browse data first,
+  giving regular YouTube playlist imports the same broader coverage.
 - Playlist entries keep their original order.
 - Playable entries include their title, artist, duration, and artwork.
 - Region-blocked or unavailable entries are skipped without preventing the
   rest of the playlist from importing.
-- Regular `youtube.com` playlist URLs continue to work as before.
+- A regular YouTube importer remains as a fallback when YouTube Music cannot
+  expose a playlist.
 
 When you cut a release (`git tag vX.Y.Z && git push origin vX.Y.Z`), add
 its section here first, then paste the same text into the GitHub release
