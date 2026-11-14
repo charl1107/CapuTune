@@ -114,7 +114,6 @@ jobs:
         with:
           channel: stable
           cache: true
-          cache-dependency-path: pubspec.lock
 
       - name: Decode release keystore
         env:
