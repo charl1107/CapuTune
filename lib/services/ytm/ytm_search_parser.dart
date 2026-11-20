@@ -167,7 +167,8 @@ YtmSongResult? _parseMusicCard(Map card) {
     }
   }
   // Card subtitles are typically "Video • kiyo • 26M views • 3:51".
-  final artist = parts.length > 1 ? parts[1] : (parts.isNotEmpty ? parts.first : '');
+  final artist =
+      parts.length > 1 ? parts[1] : (parts.isNotEmpty ? parts.first : '');
   final duration = parts.isNotEmpty && RegExp(r'^\d+:\d+$').hasMatch(parts.last)
       ? parts.last
       : null;
@@ -204,15 +205,22 @@ YtmSongResult? _parseSongItem(Map item) {
 
   // The play overlay is the only place a row reliably carries the videoId
   // a tap will actually stream; rows for artists/albums/playlists lack it.
+  // Most song rows expose the playable ID through the thumbnail overlay.
+  // Broad/unfiltered search rows can instead expose it on the row's own
+  // navigation endpoint (and playlist-style rows may use playlistItemData).
+  // Accept all of these provider shapes so broad results are not silently
+  // reduced to only the first shelf.
   final videoId = nav(item, [
-    'overlay',
-    'musicItemThumbnailOverlayRenderer',
-    'content',
-    'musicPlayButtonRenderer',
-    'playNavigationEndpoint',
-    'watchEndpoint',
-    'videoId',
-  ]);
+        'overlay',
+        'musicItemThumbnailOverlayRenderer',
+        'content',
+        'musicPlayButtonRenderer',
+        'playNavigationEndpoint',
+        'watchEndpoint',
+        'videoId',
+      ]) ??
+      nav(item, ['navigationEndpoint', 'watchEndpoint', 'videoId']) ??
+      nav(item, ['playlistItemData', 'videoId']);
   if (videoId is! String || videoId.isEmpty) return null;
 
   // Podcast episodes carry a videoId but no music catalog; with the songs
@@ -276,9 +284,7 @@ List<YtmPlaylistItem> parseYtmPlaylist(dynamic decoded) {
     if (columns is! List || columns.isEmpty) continue;
     final title = _firstRunText(columns[0]);
     if (title == null || title.isEmpty) continue;
-    final artist = columns.length > 1
-        ? (_firstRunText(columns[1]) ?? '')
-        : '';
+    final artist = columns.length > 1 ? (_firstRunText(columns[1]) ?? '') : '';
     String? duration;
     final fixed = item['fixedColumns'];
     if (fixed is List && fixed.isNotEmpty) {

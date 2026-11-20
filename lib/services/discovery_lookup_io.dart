@@ -99,45 +99,29 @@ Future<(List<Song>, bool)> searchRemoteDetailed(String query) async {
     if (trimmed.isEmpty) return (<Song>[], false);
 
     final client = _ytmClient();
-    // Search the unfiltered music.youtube.com response as the source of
-    // truth. The Songs-filter request hides official videos, lyric uploads,
-    // live versions, and older/uncatalogued tracks (for example Kiyo's
-    // "Ikaw Lang" and "Eba"). The parser keeps playable music rows while
-    // excluding artist/album/playlist metadata rows.
-    List<YtmSongResult> rawResults = const [];
-    try {
-      // Dynamic invocation keeps older test doubles source-compatible while
-      // production always uses YtmSearchClient.searchVideos().
-      final broadCall = (client as dynamic).searchVideos(trimmed);
-      if (broadCall is Future<List<YtmSongResult>>) {
-        rawResults = await broadCall;
-      } else {
-        // Compatibility fallback only for legacy clients/test doubles.
-        rawResults = await client.searchSongs(trimmed);
-      }
-    } catch (_) {
-      // Legacy test doubles may throw NoSuchMethodError for searchVideos.
-      // Fall back to the catalog method in that compatibility case; the real
-      // client catches its own network errors and normally never reaches here.
-      // Let a genuine legacy catalog failure reach the outer failure
-      // contract instead of turning it into a successful empty search.
-      rawResults = await client.searchSongs(trimmed);
-    }
-    final results = <Song>[];
-    final seenIds = <String>{};
-    for (final row in rawResults) {
-      if (seenIds.add(row.id)) results.add(songFromYtm(row));
-    }
+    // Select the provider search mode from the user's request. A normal
+    // query uses YouTube Music's broad music search; explicit "songs" and
+    // "videos" requests use that provider shelf instead of merging every
+    // shelf together. This keeps the behavior generic for any query.
+    final mode = _searchModeFor(trimmed);
+    final rawResults = await _searchWithMode(client, trimmed, mode);
 
+    // Preserve every row returned by YouTube Music. Different uploads of the
+    // same song are meaningful on YouTube, and callers may intentionally want
+    // the provider's complete order rather than Spotify-style consolidation.
+    final results = rawResults.map(songFromYtm).toList();
+
+    // Genre-word expansion is an additional provider search only for the
+    // built-in genre terms; ordinary user queries are not rewritten.
+    // The selected mode above still controls the primary request.
+    //
     // Genre-word expansion: the songs filter answers bare genre words with
     // popularity picks (titles often *contain* the word — "Metal Health" —
     // while missing the artists named after the genre entirely), so textual
     // raw-row matches are NOT a reason to skip. Suggestions are always
     // tried for genre words; with none returned, no extra searches happen.
     if (_isGenreWord(trimmed)) {
-      for (final song in await _searchViaSuggestions(trimmed)) {
-        if (seenIds.add(song.id)) results.add(song);
-      }
+      results.addAll(await _searchViaSuggestions(trimmed));
     }
 
     return (rankTracks(results, query), false);
@@ -146,11 +130,44 @@ Future<(List<Song>, bool)> searchRemoteDetailed(String query) async {
   }
 }
 
+enum _SearchMode { all, songs, videos }
+
+_SearchMode _searchModeFor(String query) {
+  final words = query.toLowerCase().split(RegExp(r'\s+'));
+  if (words.contains('videos') || words.contains('video')) {
+    return _SearchMode.videos;
+  }
+  if (words.contains('songs') ||
+      words.contains('song') ||
+      words.contains('tracks') ||
+      words.contains('track')) {
+    return _SearchMode.songs;
+  }
+  return _SearchMode.all;
+}
+
+Future<List<YtmSongResult>> _searchWithMode(
+    YtmSearchClient client, String query, _SearchMode mode) async {
+  if (mode == _SearchMode.songs) return client.searchSongs(query);
+
+  try {
+    // Dynamic invocation keeps older injected clients source-compatible.
+    final result = mode == _SearchMode.videos
+        ? (client as dynamic).searchVideos(query)
+        : (client as dynamic).searchAll(query);
+    if (result is Future<List<YtmSongResult>>) return await result;
+  } catch (_) {
+    // Fall through to the catalog request for legacy clients.
+  }
+  return client.searchSongs(query);
+}
+
 /// The unranked search pipeline (kept for the pipeline tests): raw catalog
 /// rows for [query], merged with genre-expansion results when [query] is a
 /// genre word the raw search cannot match textually. No local ranking —
 /// callers that need provider order use this.
-Future<List<Song>> searchRaw(String query) async => (await _searchRawDetailed(query)).$1;
+Future<List<Song>> searchRaw(String query) async =>
+    (await _searchRawDetailed(query)).$1;
 
 Future<(List<Song>, bool)> _searchRawDetailed(String query) async {
   try {
@@ -158,14 +175,12 @@ Future<(List<Song>, bool)> _searchRawDetailed(String query) async {
     if (trimmed.isEmpty) return (<Song>[], false);
 
     final client = _ytmClient();
-    final rawResults = await client.searchSongs(trimmed);
+    final rawResults =
+        await _searchWithMode(client, trimmed, _searchModeFor(trimmed));
     final results = rawResults.map(songFromYtm).toList();
-    final seenIds = rawResults.map((r) => r.id).toSet();
 
     if (_isGenreWord(trimmed)) {
-      for (final song in await _searchViaSuggestions(trimmed)) {
-        if (seenIds.add(song.id)) results.add(song);
-      }
+      results.addAll(await _searchViaSuggestions(trimmed));
     }
 
     return (results, false);
@@ -177,7 +192,15 @@ Future<(List<Song>, bool)> _searchRawDetailed(String query) async {
 /// Genre words where the YTM songs filter returns popularity picks instead
 /// of the artists named after the genre.
 const Set<String> _genreWords = {
-  'metal', 'rock', 'pop', 'jazz', 'blues', 'rap', 'techno', 'punk', 'folk',
+  'metal',
+  'rock',
+  'pop',
+  'jazz',
+  'blues',
+  'rap',
+  'techno',
+  'punk',
+  'folk',
   'soul',
 };
 
@@ -189,23 +212,23 @@ Future<List<Song>> _searchViaSuggestions(String genreQuery) async {
   final client = _ytmClient();
   final suggestions = await client.searchSuggestions(genreQuery);
 
-  // Cap the expansion: two suggestion searches keep the worst-case latency
-  // at three total round-trips while still surfacing the main artist(s).
-  final extraQueries = suggestions.take(2).map((s) => s.text).toList();
+  // Keep a small bound on expanded queries so a broad genre search cannot
+  // turn into an unbounded number of network requests. Do not cap the rows
+  // returned by each query: the provider already decides how many relevant
+  // rows belong to a search page, and an app-side cap made genre searches
+  // look artificially limited (only five rows per suggestion).
+  final extraQueries = suggestions.take(5).map((s) => s.text).toList();
 
   final expansion = <Song>[];
   for (final q in extraQueries) {
     try {
-      var taken = 0;
       for (final r in await client.searchSongs(q)) {
         // The suggestion query itself is the relevance signal (YTM suggests
         // it in a search context, and the songs filter answers with the
-        // most relevant songs for it) — rows are trusted and just capped,
+        // most relevant songs for it) — trust the complete provider page,
         // since e.g. a "rock music" search legitimately returns songs whose
         // titles/artists never contain the word "rock".
-        if (taken >= _maxRowsPerSuggestion) break;
         expansion.add(songFromYtm(r));
-        taken++;
       }
     } catch (_) {
       // One failed suggestion round must not kill the others.
@@ -213,9 +236,6 @@ Future<List<Song>> _searchViaSuggestions(String genreQuery) async {
   }
   return expansion;
 }
-
-/// Upper bound on rows merged per suggestion round.
-const int _maxRowsPerSuggestion = 5;
 
 /// Maps a [YtmSongResult] onto a [Song].
 ///

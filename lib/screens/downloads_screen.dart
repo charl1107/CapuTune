@@ -29,6 +29,39 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     });
   }
 
+  Future<void> _confirmDelete(BuildContext context, Song song) async {
+    final downloadService = context.read<DownloadService>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete download?'),
+        content: Text(
+          'Remove "${song.title}" from your downloaded songs and delete '
+          'the local file?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+    await downloadService.removeDownload(song.id);
+    if (!mounted) return;
+    setState(() => _downloads.removeWhere((item) => item.id == song.id));
+  }
+
   @override
   Widget build(BuildContext context) {
     final playerService = context.watch<PlayerService>();
@@ -53,7 +86,10 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                     vertical: AppColors.spacingXS,
                   ),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(AppColors.radiusFull),
                   ),
                   child: Text(
@@ -77,13 +113,22 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
-                    Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
-                    Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.3),
+                    Theme.of(context)
+                        .colorScheme
+                        .primaryContainer
+                        .withValues(alpha: 0.3),
+                    Theme.of(context)
+                        .colorScheme
+                        .secondaryContainer
+                        .withValues(alpha: 0.3),
                   ],
                 ),
                 border: Border(
                   bottom: BorderSide(
-                    color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.1),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .outline
+                        .withValues(alpha: 0.1),
                   ),
                 ),
               ),
@@ -92,7 +137,10 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   Container(
                     padding: const EdgeInsets.all(AppColors.spacingS),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(AppColors.radiusS),
                     ),
                     child: Icon(
@@ -114,7 +162,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                           'Saving to device...',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -146,7 +195,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                             CircularProgressIndicator(
                               strokeWidth: 3,
                               value: progress,
-                              backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                              backgroundColor: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
                             ),
                             Center(
                               child: Text(
@@ -169,15 +220,19 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                               song.title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w500),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w500),
                             ),
                             const SizedBox(height: AppColors.spacingXS),
                             ClipRRect(
-                              borderRadius: BorderRadius.circular(AppColors.radiusFull),
+                              borderRadius:
+                                  BorderRadius.circular(AppColors.radiusFull),
                               child: LinearProgressIndicator(
                                 value: progress,
                                 minHeight: 4,
-                                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                backgroundColor: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
                               ),
                             ),
                           ],
@@ -198,13 +253,19 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                         Container(
                           padding: const EdgeInsets.all(AppColors.spacingXL),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest
+                                .withValues(alpha: 0.3),
                             shape: BoxShape.circle,
                           ),
                           child: Icon(
                             Icons.download_done_rounded,
                             size: 64,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant
+                                .withValues(alpha: 0.5),
                           ),
                         ),
                         const SizedBox(height: AppColors.spacingL),
@@ -213,14 +274,18 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w600,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ),
                         const SizedBox(height: AppColors.spacingS),
                         Text(
                           'Tap the download icon on any song!',
                           style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant
+                                .withValues(alpha: 0.7),
                           ),
                         ),
                       ],
@@ -236,7 +301,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                             Text(
                               'Waiting for downloads to complete...',
                               style: TextStyle(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                               ),
                             ),
                           ],
@@ -247,14 +314,25 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                         itemCount: _downloads.length,
                         itemBuilder: (context, index) {
                           final song = _downloads[index];
-                          return SongCard(
-                            song: song,
-                            onTap: () {
-                              playerService.playList(
-                                _downloads,
-                                startIndex: index,
-                              );
-                            },
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: SongCard(
+                                  song: song,
+                                  onTap: () {
+                                    playerService.playList(
+                                      _downloads,
+                                      startIndex: index,
+                                    );
+                                  },
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Delete download',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () => _confirmDelete(context, song),
+                              ),
+                            ],
                           );
                         },
                       ),

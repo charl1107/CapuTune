@@ -33,6 +33,9 @@ const String _kClientName = 'WEB_REMIX';
 /// Innertube search params selecting the "Songs" filter shelf.
 const String kYtmSongsParams = 'EgWKAQIIAWoMEA4QChADEAQQCRAF';
 
+/// Innertube search params selecting the "Videos" filter shelf.
+const String kYtmVideosParams = 'EgWKAQIQAWoMEA4QChADEAQQCRAF';
+
 /// Browser-like user agent, matching what ytmusicapi sends. No cookies,
 /// credentials, or user-specific headers are ever attached.
 const String kYtmUserAgent =
@@ -115,13 +118,13 @@ class YtmSearchClient {
     return _searchWithParams(query, kYtmSongsParams);
   }
 
-  /// Searches the general YouTube Music result page for [query]. Unlike the
-  /// songs shelf, this also exposes prominent music videos (including older
-  /// official music videos such as Kiyo's "Eba") through a card shelf.
-  ///
-  /// This is deliberately separate from [searchSongs] so callers can use the
-  /// cheaper catalog request first and broaden only when needed.
+  /// Searches the YouTube Music Videos filter for [query].
   Future<List<YtmSongResult>> searchVideos(String query) async {
+    return _searchWithParams(query, kYtmVideosParams);
+  }
+
+  /// Searches the unfiltered YouTube Music result page for [query].
+  Future<List<YtmSongResult>> searchAll(String query) async {
     return _searchWithParams(query, null);
   }
 
@@ -209,10 +212,8 @@ class YtmSearchClient {
     try {
       client.autoUncompress = true;
       client.connectionTimeout = timeout;
-      final request =
-          await client.postUrl(Uri.parse(url)).timeout(
-              timeout,
-              onTimeout: () => throw TimeoutException('ytm search connect'));
+      final request = await client.postUrl(Uri.parse(url)).timeout(timeout,
+          onTimeout: () => throw TimeoutException('ytm search connect'));
       request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
       request.headers.set('origin', 'https://music.youtube.com');
       request.headers.set(HttpHeaders.userAgentHeader, kYtmUserAgent);

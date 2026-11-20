@@ -148,7 +148,7 @@ void main() {
       expect(results.map((s) => s.id), ['g1', 'm1', 'bad']);
     });
 
-    test('expansion is capped per suggestion round', () async {
+    test('expansion keeps the complete result page for each suggestion', () async {
       final client = _StubClient(
         {
           'metal': [_r('g1', 'Genre Pick', 'Band')],
@@ -163,7 +163,7 @@ void main() {
       ytmClientFactoryForTest = () => client;
 
       final results = await searchRaw('metal');
-      expect(results, hasLength(1 + 5)); // 1 raw + 5 capped expansion rows
+      expect(results, hasLength(1 + 10)); // 1 raw + complete expansion page
     });
 
     test('raw hits still expand for genre words', () async {
